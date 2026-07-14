@@ -62,6 +62,29 @@ claude mcp add glaxnimate -- /home/franklynece/glaxnimate-ai/.venv/bin/python \
 
 Then just ask: *"animate a man walking home from school"*.
 
+### Live GUI bridge (optional)
+
+```sh
+bash scripts/install_plugin.sh     # needs sudo, for python3-pyqt6
+```
+
+Then in Glaxnimate: **Plugins > Start AI Bridge**. The app listens on
+127.0.0.1:9123 and `gui_live_run` edits the document you are looking at, live.
+Every AI edit is one undo step.
+
+Two things make it safe, and both obvious alternatives are wrong:
+
+- It uses **`QTcpServer`**, whose signals Qt delivers on the main thread — so
+  document edits happen on the main thread *by construction*. A background socket
+  thread poking the document would corrupt Qt state.
+- It uses **PyQt6 from apt**, which links the same system Qt the app already
+  loaded. `pip install PySide6` would drag a *second* Qt into the process.
+
+Glaxnimate's plugin directory is `~/.local/share/**stalefiles**/glaxnimate/plugins`
+— the organization is `stalefiles`, not `glaxnimate`. Install to the wrong place and
+the plugin silently never appears in the menu. `install_plugin.sh` discovers it
+rather than guessing.
+
 The tools are ordered so the cheap tiers come first — `lint_animation` (free) and
 `diagnose_animation` (~500 tokens, names the frame) before `render_contact_sheet`
 (~1,400 tokens, says "hmm"). Pushing the model down that ladder is the point.

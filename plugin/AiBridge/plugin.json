@@ -1,0 +1,26 @@
+{
+    "name": "AI Bridge",
+    "description": "Listen on 127.0.0.1:9123 so an AI can edit this document live",
+    "author": "Thimble Berry",
+    "engine": "python",
+    "version": 1,
+    "icon": "theme:network-connect",
+    "services": [
+        {
+            "type": "action",
+            "label": "Start AI Bridge",
+            "script": {
+                "module": "ai_bridge",
+                "function": "start"
+            }
+        },
+        {
+            "type": "action",
+            "label": "Stop AI Bridge",
+            "script": {
+                "module": "ai_bridge",
+                "function": "stop"
+            }
+        }
+    ]
+}

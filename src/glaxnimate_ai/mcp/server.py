@@ -199,6 +199,57 @@ def export(doc_id: str, filename: str, format: str = "json") -> str:
 
 
 @mcp.tool()
+def open_in_gui(doc_id: str, filename: str = "scene.rawr") -> str:
+    """Open this animation in the Glaxnimate GUI so the user can see and edit it.
+
+    Always works; needs no plugin. Use it when you want the user to look at the
+    real thing rather than a contact sheet.
+    """
+    from glaxnimate import io as gio
+
+    from ..engine.live import open_in_glaxnimate
+
+    s = store.get(doc_id)
+    OUT.mkdir(exist_ok=True)
+    path = OUT / filename
+    fmt = gio.registry.from_extension("rawr", gio.Direction.Export)
+    path.write_bytes(fmt.save(s.scene.comp))
+    return open_in_glaxnimate(path)
+
+
+@mcp.tool()
+def gui_live_run(code: str) -> str:
+    """Edit the document open in a RUNNING Glaxnimate window, live.
+
+    Requires the user to have clicked **Plugins > Start AI Bridge**. In scope:
+    `document`, `comp`, `window`, `model`, `utils`. Each call is one undo step, so
+    the user can Ctrl+Z anything you do.
+
+    Use this to tweak a scene the user is already looking at. To build one from
+    scratch, use `run_script` — it is headless, faster, and has the cartoon library.
+    """
+    from ..engine.live import BridgeUnavailable, LiveBridge
+
+    try:
+        r = LiveBridge().run(code)
+    except BridgeUnavailable as e:
+        return f"bridge not available: {e}"
+    return r.get("result", "ok") if r.get("ok") else r.get("error", "failed")
+
+
+@mcp.tool()
+def gui_live_status() -> str:
+    """Is a Glaxnimate window listening for live edits?"""
+    from ..engine.live import BridgeUnavailable, LiveBridge
+
+    try:
+        r = LiveBridge(timeout=2.0).ping()
+    except BridgeUnavailable as e:
+        return f"no: {e}"
+    return f"yes - live document is {r.get('size')}"
+
+
+@mcp.tool()
 def preview_for_human(doc_id: str, filename: str = "preview.gif") -> str:
     """TIER 4 - write a GIF for the *user* to watch.
 
