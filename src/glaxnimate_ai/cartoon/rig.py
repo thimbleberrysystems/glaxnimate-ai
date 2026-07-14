@@ -55,6 +55,13 @@ class Joint:
     rolling: bool = False
     radius: float = 0.0
 
+    #: Relative mass, for the balance check. **Bone length is a bad proxy for
+    #: mass** — a torso is short and heavy, a leg is long and light — and using it
+    #: pins the centre of mass to the legs so hard that a figure bent double still
+    #: reads as balanced. Roughly anthropometric percentages work well. Zero means
+    #: "fall back to length", which is fine for rigs where balance is not checked.
+    mass: float = 0.0
+
 
 @dataclass(frozen=True, slots=True)
 class JointFrame:

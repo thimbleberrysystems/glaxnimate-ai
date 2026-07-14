@@ -52,20 +52,22 @@ def biped(
     """Side-view two-legged figure. `human()` is this with default proportions."""
     joints = [
         Joint("hips", None, length=0.0),
-        Joint("spine", "hips", length=spine, rest_angle=-90.0, offset=Vec2(0, 0)),
-        Joint("head", "spine", length=head, rest_angle=0.0),
+        Joint("spine", "hips", length=spine, rest_angle=-90.0, offset=Vec2(0, 0), mass=45.0),
+        Joint("head", "spine", length=head, rest_angle=0.0, mass=8.0),
         # Arms hang from the top of the spine (its tip = the shoulders).
-        Joint("arm_upper", "spine", length=arm, rest_angle=180.0),
-        Joint("arm_lower", "arm_upper", length=forearm, rest_angle=0.0),
-        Joint("arm_upper_far", "spine", length=arm, rest_angle=180.0),
-        Joint("arm_lower_far", "arm_upper_far", length=forearm, rest_angle=0.0),
+        Joint("arm_upper", "spine", length=arm, rest_angle=180.0, mass=3.0),
+        Joint("arm_lower", "arm_upper", length=forearm, rest_angle=0.0, mass=2.0),
+        Joint("arm_upper_far", "spine", length=arm, rest_angle=180.0, mass=3.0),
+        Joint("arm_lower_far", "arm_upper_far", length=forearm, rest_angle=0.0, mass=2.0),
     ]
     for side in ("l", "r"):
         joints += [
-            Joint(f"thigh_{side}", "hips", length=thigh, rest_angle=90.0, offset=Vec2(0, 0)),
+            Joint(f"thigh_{side}", "hips", length=thigh, rest_angle=90.0,
+                  offset=Vec2(0, 0), mass=10.0),
             # The shin's tip is the foot: this is the ground contact the linter polices.
-            Joint(f"shin_{side}", f"thigh_{side}", length=shin, rest_angle=0.0, contact=True),
-            Joint(f"foot_{side}", f"shin_{side}", length=22.0, rest_angle=-90.0),
+            Joint(f"shin_{side}", f"thigh_{side}", length=shin, rest_angle=0.0,
+                  contact=True, mass=4.0),
+            Joint(f"foot_{side}", f"shin_{side}", length=22.0, rest_angle=-90.0, mass=1.0),
         ]
 
     limbs = [
