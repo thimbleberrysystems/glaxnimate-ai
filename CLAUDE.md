@@ -52,3 +52,16 @@ is invisible and every frame renders blank, with no error.
 Plain, conventional messages describing the change, authored by Thimble Berry.
 **No AI attribution of any kind** — no `Co-Authored-By: Claude`, no
 "Generated with Claude Code" footer in PRs.
+
+## Using it from Claude
+
+```sh
+claude mcp add glaxnimate -- /home/franklynece/glaxnimate-ai/.venv/bin/python \
+    -m glaxnimate_ai.mcp.server
+```
+
+Then just ask: *"animate a man walking home from school"*.
+
+The tools are ordered so the cheap tiers come first — `lint_animation` (free) and
+`diagnose_animation` (~500 tokens, names the frame) before `render_contact_sheet`
+(~1,400 tokens, says "hmm"). Pushing the model down that ladder is the point.
