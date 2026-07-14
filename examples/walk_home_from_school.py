@@ -59,7 +59,7 @@ def main() -> None:
     s.run(
         "man = human()\n"
         "walk = make_gait(man, 'walk', cycle_frames=24)\n"
-        "add_character(man, walk, x=150, name='man', color='#33333c')\n"
+        "add_character(man, walk, x=150, name='man')\n"
         "print(f'walk: stride {walk.stride:.0f}px, {walk.speed:.1f}px/frame, "
         "{walk.speed * frames:.0f}px travelled')\n"
     )

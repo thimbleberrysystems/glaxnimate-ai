@@ -96,10 +96,15 @@ class Session:
         *,
         x: float = 80.0,
         name: str = "character",
-        color: str = "#3b3b46",
-        thickness: float = 14.0,
+        color: str | None = None,
+        thickness: float | None = None,
     ) -> Character:
-        """Bake a rig into the document and register it with the critic."""
+        """Bake a rig into the document and register it with the critic.
+
+        `color`/`thickness` default to None so the body's own skin is used. Pass
+        them to flatten the character to a single colour — useful for a silhouette
+        check, useless for a cartoon.
+        """
 
         def pose_fn(t: float):
             return pose_at(

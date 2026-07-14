@@ -12,13 +12,33 @@ walk *and* a correct diagonal trot without either knowing about the other.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .gait import GAIT_DEFAULTS, HIP_HEIGHT_RATIO, Gait, Limb, Swing, gait_phases
 from .geometry import Vec2
 from .rig import Joint, Pose, Rig
 
-__all__ = ["Body", "biped", "human", "quadruped", "make_gait"]
+__all__ = ["Body", "Part", "biped", "human", "quadruped", "make_gait"]
+
+
+@dataclass(slots=True)
+class Part:
+    """How one bone is *drawn*. Pure data — `engine/bake.py` does the drawing.
+
+    Skinning is what turns a rig into a character. The rig was already correct as
+    a stick figure; a torso being thicker than a forearm, a head being an ellipse
+    rather than a rod, and a hand being a dot at the end of the arm are all it
+    takes to read as a person instead of a diagram. None of it touches the maths.
+    """
+
+    width: float = 14.0
+    color: str = "#33333c"
+    #: Draw an ellipse at the bone's tip instead of a capsule — a head.
+    head: tuple[float, float] | None = None
+    #: A dot at the bone's tip: a hand, a paw, a nose.
+    tip: float = 0.0
+    #: Painting order. Low numbers go behind, so a far arm sits under the torso.
+    z: int = 0
 
 
 @dataclass(slots=True)
@@ -32,6 +52,8 @@ class Body:
     leg_length: float
     #: Joints to draw as thick strokes, in draw order.
     bones: list[str]
+    #: How each bone is skinned. Missing joints fall back to a plain capsule.
+    parts: dict[str, Part] = field(default_factory=dict)
 
     @property
     def hip_height(self) -> float:
@@ -80,6 +102,8 @@ def biped(
         Swing("arm_upper_far", phase=0.0, amplitude=22.0),
         Swing("head", phase=0.0, amplitude=3.0),
     ]
+    # Far side first, near side last: the limbs on the far side of the body must
+    # paint *behind* the torso or the figure reads as flat.
     bones = [
         "arm_upper_far", "arm_lower_far",
         "thigh_r", "shin_r", "foot_r",
@@ -87,7 +111,24 @@ def biped(
         "thigh_l", "shin_l", "foot_l",
         "arm_upper", "arm_lower",
     ]
-    return Body(Rig(joints), limbs, swings, leg_length=thigh + shin, bones=bones)
+
+    SHIRT, TROUSER, SKIN, SHOE = "#4a6fa5", "#2f3542", "#f0c39a", "#22242c"
+    FAR = "#3d5c8a"  # the far limbs sit in shadow, which is most of the depth cue
+    parts = {
+        "spine": Part(width=36, color=SHIRT),
+        "head": Part(color=SKIN, head=(46, 52)),
+        "arm_upper": Part(width=17, color=SHIRT),
+        "arm_lower": Part(width=13, color=SKIN, tip=8),      # tip = the hand
+        "arm_upper_far": Part(width=17, color=FAR),
+        "arm_lower_far": Part(width=13, color=FAR, tip=8),
+        "thigh_l": Part(width=24, color=TROUSER),
+        "shin_l": Part(width=18, color=TROUSER),
+        "foot_l": Part(width=12, color=SHOE, tip=6),
+        "thigh_r": Part(width=24, color=FAR),
+        "shin_r": Part(width=18, color=FAR),
+        "foot_r": Part(width=12, color="#191b21", tip=6),
+    }
+    return Body(Rig(joints), limbs, swings, leg_length=thigh + shin, bones=bones, parts=parts)
 
 
 def human(**kw) -> Body:
@@ -100,7 +141,7 @@ def quadruped(
     lower: float = 55.0,
     body: float = 120.0,
     neck: float = 42.0,
-    head: float = 34.0,
+    head: float = 20.0,   # short: the head is the *ellipse*, not the bone
     tail: float = 58.0,
 ) -> Body:
     """Side-view four-legged animal: dog, cat, horse, deer.
@@ -144,7 +185,24 @@ def quadruped(
         "tail", "spine", "neck", "head",
         "hind_upper_l", "hind_lower_l", "fore_upper_l", "fore_lower_l",
     ]
-    return Body(Rig(joints), limbs, swings, leg_length=upper + lower, bones=bones)
+
+    COAT, FAR, NOSE = "#a5734a", "#8a5f3d", "#33333c"
+    parts = {
+        "spine": Part(width=44, color=COAT),
+        "neck": Part(width=26, color=COAT),
+        "head": Part(width=22, color=COAT, head=(42, 34)),
+        "tail": Part(width=10, color=COAT, tip=7),
+        "hind_upper_l": Part(width=20, color=COAT),
+        "hind_lower_l": Part(width=13, color=COAT, tip=7),
+        "fore_upper_l": Part(width=18, color=COAT),
+        "fore_lower_l": Part(width=12, color=COAT, tip=7),
+        "hind_upper_r": Part(width=20, color=FAR),
+        "hind_lower_r": Part(width=13, color=FAR, tip=7),
+        "fore_upper_r": Part(width=18, color=FAR),
+        "fore_lower_r": Part(width=12, color=FAR, tip=7),
+    }
+    del NOSE
+    return Body(Rig(joints), limbs, swings, leg_length=upper + lower, bones=bones, parts=parts)
 
 
 def make_gait(body: Body, name: str = "walk", **overrides) -> Gait:

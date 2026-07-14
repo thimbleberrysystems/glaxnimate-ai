@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from glaxnimate import model, utils
 
 from ..cartoon.geometry import Vec2
-from ..cartoon.presets import Body
+from ..cartoon.presets import Body, Part
 from ..cartoon.rig import Pose
 
 __all__ = ["Scene", "bake_rig", "bake_samples"]
@@ -61,15 +61,43 @@ class Scene:
         return lay
 
 
-def _bone_group(parent, length: float, thickness: float, color: str) -> model.shapes.Group:
-    """A capsule from the joint origin along its local +x axis."""
+def _bone_group(parent, length: float, part: Part) -> model.shapes.Group:
+    """Draw one skinned bone, anchored at the joint and running along local +x.
+
+    A capsule plus a disc at the joint. The disc is what makes an elbow look like
+    an elbow: without it, two rounded rects meeting at an angle leave a visible
+    notch on the outside of every bend.
+
+    If the part declares a `head`, it is an ellipse at the bone's tip instead —
+    a head is not a rod.
+    """
     g = parent.add_shape("Group")
-    g.add_shape("Fill").color.value = color
+    g.add_shape("Fill").color.value = part.color
+
+    if part.head:
+        hw, hh = part.head
+        e = g.add_shape("Ellipse")
+        e.size.value = utils.Size(hw, hh)
+        e.position.value = utils.Point(length, 0.0)
+        return g
+
+    w = part.width
     r = g.add_shape("Rect")
-    r.size.value = utils.Size(max(length, 1.0), thickness)
-    # Shift the bone so the group's origin is the joint, not the bone's centre.
+    r.size.value = utils.Size(max(length, 1.0), w)
+    # Offset by half the length so the group's origin is the joint, not the bone's
+    # centre — otherwise rotation swings the bone like a propeller.
     r.position.value = utils.Point(length / 2.0, 0.0)
-    r.rounded.value = thickness / 2.0
+    r.rounded.value = w / 2.0
+
+    joint_cap = g.add_shape("Ellipse")
+    joint_cap.size.value = utils.Size(w, w)
+    joint_cap.position.value = utils.Point(0.0, 0.0)
+
+    if part.tip > 0:  # a hand, a paw, a nose
+        t = g.add_shape("Ellipse")
+        t.size.value = utils.Size(part.tip * 2, part.tip * 2)
+        t.position.value = utils.Point(length, 0.0)
+
     return g
 
 
@@ -79,19 +107,31 @@ def bake_rig(
     pose_fn: Callable[[float], Pose],
     *,
     frames: int,
-    color: str = "#3b3b46",
-    thickness: float = 14.0,
+    color: str | None = None,
+    thickness: float | None = None,
     joint_color: str | None = "#e8543f",
     joint_radius: float = 0.0,
     layer_name: str = "character",
 ) -> model.shapes.Layer:
-    """Sample `pose_fn` once per frame and keyframe every bone."""
+    """Sample `pose_fn` once per frame and keyframe every bone.
+
+    Bones are skinned from `body.parts`. `color`/`thickness` override the skin
+    entirely, which is what you want for a silhouette or a debug pass.
+    """
     lay = scene.layer(layer_name)
     groups: dict[str, model.shapes.Group] = {}
 
     for name in body.bones:
         joint = body.rig.joints[name]
-        groups[name] = _bone_group(lay, joint.length, thickness, color)
+        part = body.parts.get(name, Part())
+        if color is not None or thickness is not None:
+            part = Part(
+                width=thickness if thickness is not None else part.width,
+                color=color if color is not None else part.color,
+                head=part.head,
+                tip=part.tip,
+            )
+        groups[name] = _bone_group(lay, joint.length, part)
         groups[name].name = name
 
     if joint_color and joint_radius > 0:
