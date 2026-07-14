@@ -6,7 +6,11 @@ requires-python = ">=3.14"
 license = { text = "MIT" }
 dependencies = [
     "pillow>=11",
+    "mcp[cli]>=1.2",
 ]
+
+[project.scripts]
+glaxnimate-ai = "glaxnimate_ai.mcp.server:main"
 
 # The `glaxnimate` module is NOT a pip dependency. The PyPI wheel is built on
 # openSUSE against a patched ffmpeg and cannot load elsewhere; we build the

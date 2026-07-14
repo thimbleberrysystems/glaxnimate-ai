@@ -176,3 +176,38 @@ def test_standing_figure_leaning_past_its_feet_is_caught():
     bad = diagnose_rig(body, bent_double, frames=FRAMES, ground_y=GROUND)
     off = next(f for f in bad.findings if f.metric == "off_balance")
     assert off.verdict == "poor", bad.format()
+
+
+# ------------------------------------------------------------------ the session
+def test_session_runs_a_script_and_registers_characters():
+    """The end-to-end path an LLM actually drives."""
+    from glaxnimate_ai.engine.session import SessionStore
+
+    store = SessionStore()
+    s = store.create(width=960, height=420, frames=48)
+
+    res = s.run(
+        "man = human()\n"
+        "add_character(man, make_gait(man, 'walk', cycle_frames=24), x=90, name='man')\n"
+        "dog = quadruped()\n"
+        "add_character(dog, make_gait(dog, 'trot', cycle_frames=20), x=560, name='dog')\n"
+    )
+    assert res.ok, res.format()
+    assert [c.name for c in s.characters] == ["man", "dog"]
+
+    # and everything the script built must survive the linter
+    for ch in s.characters:
+        rep = lint_rig(ch.body, ch.pose_fn, frames=s.frames, ground_y=s.ground_y,
+                       limbs=ch.gait.limbs)
+        assert rep.ok, f"{ch.name}: {rep.format()}"
+
+
+def test_script_errors_come_back_as_a_usable_message():
+    """A bad script must teach the model how to fix it, not just fail."""
+    from glaxnimate_ai.engine.session import SessionStore
+
+    s = SessionStore().create()
+    res = s.run("make_gait(human(), 'moonwalk')")
+    assert not res.ok
+    assert "moonwalk" in res.format()
+    assert "walk" in res.format()  # it lists the gaits that DO exist

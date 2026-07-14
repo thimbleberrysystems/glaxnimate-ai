@@ -86,7 +86,8 @@ def motion_trail(
     last = int(scene.comp.animation.last_frame)
     frames = [round(i * (last - 1) / max(count - 1, 1)) for i in range(count)]
 
-    base = Image.new("RGBA", (scene.comp.width, scene.comp.height), _BG)
+    # comp.width/height come back as floats from the Qt bindings.
+    base = Image.new("RGBA", (int(scene.comp.width), int(scene.comp.height)), _BG)
     for i, f in enumerate(frames):
         shot = scene.comp.render_image(f).convert("RGBA")
         # Older frames fade out, so the direction of travel is legible.
