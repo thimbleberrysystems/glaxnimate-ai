@@ -6,3 +6,4 @@ build.log
 /out/
 .pytest_cache/
 .ruff_cache/
+/projects/

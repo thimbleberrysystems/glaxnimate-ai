@@ -59,7 +59,8 @@ def new_document(
     s = store.create(width=width, height=height, frames=frames, fps=fps)
     return (
         f"{s.doc_id}: {width}x{height}, {frames} frames @ {fps}fps, "
-        f"ground_y={s.ground_y:.0f}"
+        f"ground_y={s.ground_y:.0f}. Scenes autosave and survive restarts - "
+        f"describe_scene(doc_id) shows what is in one."
     )
 
 
@@ -112,7 +113,7 @@ def lint_animation(doc_id: str) -> str:
     for ch in s.characters:
         rep = lint_rig(
             ch.body, ch.pose_fn, frames=s.frames, ground_y=s.ground_y,
-            limbs=ch.gait.limbs if ch.gait else None, canvas=canvas,
+            limbs=ch.limb_pairs or None, canvas=canvas,
         )
         out.append(f"{ch.name}: {rep.format()}")
     for name, samples, radius in s.objects:
@@ -143,6 +144,17 @@ def diagnose_animation(doc_id: str, track: str | None = None) -> str:
         )
         out.append(f"{ch.name}:\n{d.format()}")
     return "\n".join(out)
+
+
+@mcp.tool()
+def describe_scene(doc_id: str) -> str:
+    """What is in this scene, as data: canvas, scenery, characters (with faces and
+    expression swaps), objects. Scenes persist to disk and survive restarts —
+    passing a doc_id from a previous session reloads it transparently."""
+    from ..engine import scene_doc as SD
+
+    s = store.get(doc_id)
+    return SD.describe(s.doc)
 
 
 # ------------------------------------------------------------------- assets
@@ -361,6 +373,12 @@ FACES (swappable expressions on a slot; stepped, like cut-out animation)
   human face: neutral, happy, sad, surprised, blink.  dog: normal, happy.
   New faces are face.json assets: attachments of prop-schema shapes, authored
   screen-aligned around the slot point (x = facing, y = down).
+
+SCENERY (backdrops, from scripts)
+  scenery("sky") / scenery("ground") / scenery("house", x=520)
+  scenery("school", x=40) / scenery("tree", x=300, h=120)
+  scenery("cloud", x=140, y=70) / scenery("sun", x=880, y=66)
+  Draw back-to-front: sky first, ground last before characters.
 
 STAGE
   add_character(body, gait, x=80, name="...", color=None, thickness=None, face=None)

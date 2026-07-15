@@ -30,6 +30,7 @@ from glaxnimate import environment
 from ..cartoon import actions, assets, geometry, motion, presets, principles, rig
 from ..cartoon.gait import Gait, pose_at
 from ..cartoon.presets import Body
+from . import scene_doc as SD
 from .bake import Scene, bake_rig, bake_samples
 
 __all__ = ["Character", "Session", "SessionStore", "ScriptResult"]
@@ -43,6 +44,10 @@ class Character:
     body: Body
     gait: Gait | None
     pose_fn: Any
+    #: (upper, lower) joint pairs for the over-extension lint. Derived from the
+    #: gait at creation but stored flat, so a scene reloaded from disk (where
+    #: gait objects no longer exist) keeps the check.
+    limb_pairs: list = field(default_factory=list)
     #: attachment name -> its layer, when the character has a face.
     face_layers: dict = field(default_factory=dict)
     #: the attachment visible from frame 0.
@@ -82,6 +87,8 @@ class Session:
     characters: list[Character] = field(default_factory=list)
     #: (name, samples, radius) for every non-rig object, so the critic sees them.
     objects: list[tuple] = field(default_factory=list)
+    #: The scene as data — everything needed to rebuild this session from disk.
+    doc: dict = field(default_factory=dict)
 
     @classmethod
     def create(
@@ -96,7 +103,9 @@ class Session:
     ) -> Session:
         scene = Scene.create(width, height, frames=frames, fps=fps)
         _pinned_scenes.append(scene)  # see note on _pinned_scenes above
-        return cls(doc_id, scene, ground_y if ground_y is not None else height * 0.87, frames)
+        gy = ground_y if ground_y is not None else height * 0.87
+        doc = SD.empty_doc(width=width, height=height, frames=frames, fps=fps, ground_y=gy)
+        return cls(doc_id, scene, gy, frames, doc=doc)
 
     # ------------------------------------------------------ the script's API
     def _add_character(
@@ -124,18 +133,50 @@ class Session:
             # legs — the exact bug that made the gallop face-plant.
             return pose_at(body.rig, gait, t, ground_y=self.ground_y, body_x0=x)
 
+        return self._bake_character(body, pose_fn, gait=gait, name=name,
+                                    color=color, thickness=thickness, face=face)
+
+    def _bake_character(
+        self, body: Body, pose_fn, *, gait: Gait | None, name: str,
+        color: str | None = None, thickness: float | None = None,
+        face: str | dict | None = None, record: bool = True,
+        poses: list | None = None, face_data: dict | None = None,
+        expressions: list | None = None,
+    ) -> Character:
+        """Bake + register + record. Every character path funnels through here so
+        the scene document always matches what is on the canvas."""
         layers: dict = {}
         bake_rig(
             self.scene, body, pose_fn, frames=self.frames,
             color=color, thickness=thickness, layer_name=name, layers_out=layers,
         )
-        ch = Character(name, body, gait, pose_fn)
-        if face is not None:
-            self._attach_face(ch, layers, face)
+        limb_pairs = [(li.upper, li.lower) for li in gait.limbs] if gait else []
+        ch = Character(name, body, gait, pose_fn, limb_pairs=limb_pairs)
+
+        if face_data is None and face is not None:
+            face_data = assets.load_face(face) if isinstance(face, str)                 else assets.face_validate(face)
+        if face_data is not None:
+            self._attach_face(ch, layers, face_data)
         self.characters.append(ch)
+
+        if record:
+            self.doc["characters"].append({
+                "name": name,
+                "body": assets.body_to_data(body),
+                "poses": poses if poses is not None
+                         else SD.sample_poses(pose_fn, self.frames),
+                "limbs": [list(x) for x in limb_pairs],
+                "color": color, "thickness": thickness,
+                "face": face_data,
+                "expressions": [],
+            })
+        if expressions:
+            replaying = not record
+            for frame, att in expressions:
+                self._set_expression(ch, att, frame, _record=not replaying)
         return ch
 
-    def _attach_face(self, ch: Character, layers: dict, face: str | dict) -> None:
+    def _attach_face(self, ch: Character, layers: dict, data: dict) -> None:
         """Mount a face's attachments on the character's slot bone.
 
         One layer per attachment, parented to the slot's bone so it rides the
@@ -150,7 +191,6 @@ class Session:
         from ..cartoon.rig import Pose
         from . import props as P
 
-        data = assets.load_face(face) if isinstance(face, str) else assets.face_validate(face)
         slot_name = data["slot"]
         slot = ch.body.slots.get(slot_name)
         if slot is None:
@@ -172,7 +212,8 @@ class Session:
             if i == 0:
                 ch.face_default = att
 
-    def _set_expression(self, character, attachment: str, frame: float) -> str:
+    def _set_expression(self, character, attachment: str, frame: float,
+                        _record: bool = True) -> str:
         """Swap the visible face attachment at `frame` (a hold key — no crossfade).
 
         Radio-button semantics by construction: every attachment layer is keyed
@@ -214,6 +255,11 @@ class Session:
         for att, lay in ch.face_layers.items():
             key(lay, frame, 1.0 if att == attachment else 0.0)
         ch.expressions.append((float(frame), attachment))
+        if _record:
+            for rec in self.doc.get("characters", []):
+                if rec["name"] == ch.name:
+                    rec["expressions"].append([float(frame), attachment])
+                    break
         return f"{ch.name} shows {attachment!r} from frame {frame:g}"
 
     def _add_action(
@@ -231,11 +277,40 @@ class Session:
         registered so the linter and diagnostics can inspect it (contact slip,
         joint integrity, bounds all still apply).
         """
-        bake_rig(self.scene, body, pose_fn, frames=self.frames,
-                 color=color, thickness=thickness, layer_name=name)
-        ch = Character(name, body, None, pose_fn)
-        self.characters.append(ch)
-        return ch
+        return self._bake_character(body, pose_fn, gait=None, name=name,
+                                    color=color, thickness=thickness)
+
+    _SCENERY = ("sky", "ground", "house", "school", "tree", "cloud", "sun")
+
+    def _scenery(self, template: str, *, layer_name: str = "backdrop",
+                 record: bool = True, **params):
+        """Draw a parametric backdrop template (sky, ground, house, tree ...).
+
+        v1's run_script had no scenery access at all — the examples drew their
+        backdrops in Python *around* the session, which meant an MCP-driven model
+        could animate a man but never give him a street to walk down. Recorded in
+        the scene doc like everything else.
+        """
+        from . import props as P
+
+        if template not in self._SCENERY:
+            raise ValueError(f"unknown scenery {template!r}; have {self._SCENERY}")
+        if record:
+            self.doc["scenery"].append(
+                {"template": template, "params": dict(params), "layer": layer_name}
+            )
+        lay = self.scene.layer(layer_name)
+        fn = getattr(P, template)
+        params = dict(params)  # consumed below; the doc kept the original
+        if template == "sky":
+            fn(self.scene, lay, **params)
+        elif template == "ground":
+            fn(self.scene, lay, params.pop("y", self.ground_y), **params)
+        elif template in ("house", "school", "tree"):
+            fn(lay, params.pop("x", 100.0), params.pop("ground_y", self.ground_y), **params)
+        else:  # cloud, sun
+            fn(lay, params.pop("x", 100.0), params.pop("y", 80.0), **params)
+        return lay
 
     def _add_prop(self, prop, *, x: float = 0.0, scale: float = 1.0,
                   layer_name: str = "props"):
@@ -245,16 +320,26 @@ class Session:
         data = assets.load_prop(prop) if isinstance(prop, str) else assets.prop_validate(prop)
         lay = self.scene.layer(layer_name)
         P.draw_prop(lay, data, x=x, ground_y=self.ground_y, scale=scale)
+        self.doc["props"].append({"data": data, "x": x, "scale": scale,
+                                  "layer": layer_name})
         return lay
 
-    def _add_object(self, samples, **kw):
+    def _add_object(self, samples, *, record: bool = True, **kw):
         # Register the samples so the critic can see the object too — in v1 only
         # rig characters were checkable and a ball through the floor was invisible.
         samples = list(samples)
         size = kw.get("size")
         radius = (size.y / 2.0) if size is not None else 40.0
-        self.objects.append((kw.get("layer_name", f"object{len(self.objects)}"),
-                             samples, radius))
+        name = kw.get("layer_name", f"object{len(self.objects)}")
+        self.objects.append((name, samples, radius))
+        if record:
+            self.doc["objects"].append({
+                "name": name,
+                "samples": SD.samples_to_data(samples),
+                "shape": kw.get("shape", "Ellipse"),
+                "size": [size.x, size.y] if size is not None else None,
+                "color": kw.get("color", "#e8543f"),
+            })
         return bake_samples(self.scene, samples, **kw)
 
     def _add_chaser(
@@ -323,6 +408,7 @@ class Session:
             "add_prop": self._add_prop,
             "load_face": assets.load_face,
             "set_expression": self._set_expression,
+            "scenery": self._scenery,
             # the stage
             "add_character": self._add_character,
             "add_object": self._add_object,
@@ -335,6 +421,57 @@ class Session:
             "height": self.scene.comp.height,
         }
         return ns
+
+    # ------------------------------------------------------------ persistence
+    def save(self) -> None:
+        """Write the scene document. Called automatically after every successful
+        script — a crash or restart after this point loses nothing."""
+        SD.save_doc(self.doc_id, self.doc)
+
+    @classmethod
+    def replay(cls, doc_id: str) -> Session:
+        """Rebuild a live session from its saved document.
+
+        Characters come back as sampled-pose lookups (exact — poses are only ever
+        read at integer frames), objects from their sample rows, scenery and props
+        from their recorded calls. The result bakes, lints and renders identically
+        to the session that saved it.
+        """
+        doc = SD.load_doc(doc_id)
+        c = doc["canvas"]
+        session = cls.create(
+            doc_id, width=c["width"], height=c["height"],
+            frames=c["frames"], fps=c["fps"], ground_y=doc["ground_y"],
+        )
+        session.doc = doc  # the replayed doc IS the doc; don't re-record
+
+        for sc in doc["scenery"]:
+            session._scenery(sc["template"], layer_name=sc["layer"],
+                             record=False, **sc["params"])
+        for pr in doc["props"]:
+            lay = session.scene.layer(pr.get("layer", "props"))
+            from . import props as P
+            P.draw_prop(lay, pr["data"], x=pr["x"],
+                        ground_y=session.ground_y, scale=pr.get("scale", 1.0))
+        for rec in doc["characters"]:
+            body = assets.body_from_data(rec["body"])
+            pose_fn = SD.pose_lookup(rec["poses"])
+            ch = session._bake_character(
+                body, pose_fn, gait=None, name=rec["name"],
+                color=rec.get("color"), thickness=rec.get("thickness"),
+                face_data=rec.get("face"), record=False,
+                expressions=[(f, a) for f, a in rec.get("expressions", [])],
+            )
+            ch.limb_pairs = [tuple(x) for x in rec.get("limbs", [])]
+        for ob in doc["objects"]:
+            from ..cartoon.geometry import Vec2
+            size = Vec2(*ob["size"]) if ob.get("size") else None
+            session._add_object(
+                SD.samples_from_data(ob["samples"]), record=False,
+                shape=ob.get("shape", "Ellipse"), size=size,
+                color=ob.get("color", "#e8543f"), layer_name=ob["name"],
+            )
+        return session
 
     # ---------------------------------------------------------------- running
     def run(self, code: str, *, timeout: int = 20) -> ScriptResult:
@@ -354,6 +491,7 @@ class Session:
         try:
             with redirect_stdout(buf):
                 exec(compile(code, "<script>", "exec"), ns)  # noqa: S102 - by design
+            self.save()
             return ScriptResult(True, buf.getvalue())
         except _Timeout as e:
             return ScriptResult(False, buf.getvalue(), f"TimeoutError: {e}")
@@ -409,8 +547,17 @@ class SessionStore:
         try:
             return self._sessions[doc_id]
         except KeyError:
+            pass
+        try:
+            session = Session.replay(doc_id)  # a restart loses nothing
+        except FileNotFoundError:
             known = ", ".join(self._sessions) or "none"
-            raise KeyError(f"no document {doc_id!r} (open: {known})") from None
+            raise KeyError(
+                f"no document {doc_id!r} (open: {known}; "
+                f"saved: {SD.list_docs() or 'none'})"
+            ) from None
+        self._sessions[doc_id] = session
+        return session
 
     def close(self) -> None:
         """Kept for API compatibility. The Qt environment is process-wide and
