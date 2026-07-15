@@ -15,7 +15,10 @@ are the product; this just exposes them.
 
 from __future__ import annotations
 
+import asyncio
+import functools
 import io
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
@@ -28,7 +31,47 @@ from ..feedback.diagnose import diagnose_rig
 from ..feedback.lint import lint_object, lint_rig
 
 mcp = FastMCP("glaxnimate-ai")
-store = SessionStore()
+
+# ONE thread owns Qt. Glaxnimate documents (and the Headless environment itself)
+# live exclusively on this worker: FastMCP calls sync tools inline on the event
+# loop, so in v1 a render or a 20-second script froze the whole server — and the
+# moment anyone "fixed" that with a thread pool, Qt objects would be touched from
+# many threads, which is the segfault class phase B dug out of QUndoStack::push.
+# A single-thread executor gives both properties at once: the event loop stays
+# free (list_tools and the gui_live_* tools answer while a bake runs), and every
+# Qt object only ever sees one thread.
+_worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="glax")
+_store: SessionStore | None = None
+
+
+class _Store:
+    """Deferred store: created on first use, ON the worker thread, so the Qt
+    environment is born where it will live."""
+
+    def __getattr__(self, name):
+        global _store
+        if _store is None:
+            _store = SessionStore()
+        return getattr(_store, name)
+
+
+store = _Store()
+
+
+def qt_tool(fn):
+    """Run a sync tool body on the Qt worker thread; the event loop stays free.
+
+    `functools.wraps` preserves the signature FastMCP introspects for the tool
+    schema, and the wrapper being async is what moves execution off the loop.
+    """
+
+    @functools.wraps(fn)
+    async def wrapper(*a, **kw):
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(_worker, functools.partial(fn, *a, **kw))
+
+    return wrapper
+
 
 OUT = Path("out")
 
@@ -48,6 +91,7 @@ def _png(img: Image.Image, max_px: int = 1024) -> MCPImage:
 
 # --------------------------------------------------------------------- build
 @mcp.tool()
+@qt_tool
 def new_document(
     width: int = 960, height: int = 540, frames: int = 48, fps: float = 24.0
 ) -> str:
@@ -65,6 +109,7 @@ def new_document(
 
 
 @mcp.tool()
+@qt_tool
 def run_script(doc_id: str, code: str) -> str:
     """Run Python against the cartoon library to build the animation. The workhorse.
 
@@ -97,6 +142,7 @@ def cartoon_api() -> str:
 
 # ------------------------------------------------------- the critic (cheap first)
 @mcp.tool()
+@qt_tool
 def lint_animation(doc_id: str) -> str:
     """TIER 0 - is it BROKEN? Free, instant, no image. Run this after every script.
 
@@ -123,6 +169,7 @@ def lint_animation(doc_id: str) -> str:
 
 
 @mcp.tool()
+@qt_tool
 def diagnose_animation(doc_id: str, track: str | None = None) -> str:
     """TIER 1 - is it GOOD? ~500 tokens, frame-precise, still no image.
 
@@ -147,6 +194,7 @@ def diagnose_animation(doc_id: str, track: str | None = None) -> str:
 
 
 @mcp.tool()
+@qt_tool
 def describe_scene(doc_id: str) -> str:
     """What is in this scene, as data: canvas, scenery, characters (with faces and
     expression swaps), objects. Scenes persist to disk and survive restarts —
@@ -159,6 +207,7 @@ def describe_scene(doc_id: str) -> str:
 
 # ------------------------------------------------------------------- assets
 @mcp.tool()
+@qt_tool
 def save_asset(kind: str, name: str, data: str) -> str:
     """Save a new asset (body/gait/prop) to the library as JSON. THE growth path.
 
@@ -188,6 +237,7 @@ def save_asset(kind: str, name: str, data: str) -> str:
 
 
 @mcp.tool()
+@qt_tool
 def list_assets() -> str:
     """Everything in the asset library, by kind."""
     from ..cartoon import assets as A
@@ -199,6 +249,7 @@ def list_assets() -> str:
 
 
 @mcp.tool()
+@qt_tool
 def load_asset(kind: str, name: str) -> str:
     """Read an asset's JSON — the fastest way to learn a schema is a real example."""
     import json as _json
@@ -213,6 +264,7 @@ def load_asset(kind: str, name: str) -> str:
 
 # ------------------------------------------------------------ vision (last resort)
 @mcp.tool()
+@qt_tool
 def render_contact_sheet(doc_id: str, count: int = 8, cols: int = 4) -> MCPImage:
     """TIER 2 - LOOK at it. ~1,400 tokens. Use only for what numbers cannot judge.
 
@@ -225,6 +277,7 @@ def render_contact_sheet(doc_id: str, count: int = 8, cols: int = 4) -> MCPImage
 
 
 @mcp.tool()
+@qt_tool
 def render_frame(doc_id: str, frame: int) -> MCPImage:
     """TIER 2 - one frame, full size. For inspecting a specific moment in detail."""
     s = store.get(doc_id)
@@ -232,6 +285,7 @@ def render_frame(doc_id: str, frame: int) -> MCPImage:
 
 
 @mcp.tool()
+@qt_tool
 def render_motion_trail(doc_id: str, count: int = 10) -> MCPImage:
     """TIER 2 - onion skin: successive frames ghosted over each other.
 
@@ -244,6 +298,7 @@ def render_motion_trail(doc_id: str, count: int = 10) -> MCPImage:
 
 # -------------------------------------------------------------------- output
 @mcp.tool()
+@qt_tool
 def export(doc_id: str, filename: str, format: str = "json") -> str:
     """Export the animation. Formats: json (Lottie), rawr (Glaxnimate), svg, mp4,
     webm, webp, tgs (Telegram sticker), gif.
@@ -269,6 +324,7 @@ def export(doc_id: str, filename: str, format: str = "json") -> str:
 
 
 @mcp.tool()
+@qt_tool
 def open_in_gui(doc_id: str, filename: str = "scene.rawr") -> str:
     """Open this animation in the Glaxnimate GUI so the user can see and edit it.
 
@@ -320,6 +376,7 @@ def gui_live_status() -> str:
 
 
 @mcp.tool()
+@qt_tool
 def preview_for_human(doc_id: str, filename: str = "preview.gif") -> str:
     """TIER 4 - write a GIF for the *user* to watch.
 

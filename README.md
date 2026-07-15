@@ -35,6 +35,55 @@ critic stack are the product.
 
 ---
 
+## The v2 architecture: content is data, code is engine
+
+The first version wired everything up as Python — every creature a function,
+every scene a closure in memory, every frame a keyframe. It worked, and it did
+not scale. v2 restructures around the same idea Spine uses:
+
+```
+ASSETS (JSON, validated, LLM-authorable)       SCENE (JSON, persisted per doc)
+  *.body.json   joints/limbs/skins/slots         scenery · props · characters
+  *.gait.json   phase tables + ratios            (sampled poses) · objects ·
+  *.prop.json   declarative shapes               expression swaps
+  *.face.json   attachments per slot                     │
+        └───────────────┬─────────────────────────────────┘
+                        ▼  sample
+              TIMELINE IR — plain per-frame world transforms
+                        │
+        ┌───────────────┼──────────────────────┐
+        ▼               ▼                      ▼
+     critic        keyframe reducer        renderer
+  (lint + diagnose  (semantic keys +     (frames, sheets,
+   run on data —     bezier fit)          GIF/MP4)
+   balls and props        │
+   included)              ▼
+              sparse, editable output: one layer per bone,
+              parented Spine-style, ~10 keys where v1 wrote ~200
+```
+
+What that buys, measured:
+
+- **The vocabulary grows without code.** A new creature is a JSON document the
+  model authors through `save_asset`, validated on load by the same checks the
+  builtins pass (rig cycles, the gait reach guard). The acceptance test is a bird
+  that exists nowhere in the Python — it loads, walks, and lints clean.
+- **Output is 8.4× smaller and actually editable.** `walk_home` went from 2,332
+  keyframes / 227 KB to 278 keyframes / 53 KB, with keys seeded at pose extremes
+  and bezier easing fitted per segment. In the GUI it is a poseable puppet —
+  rotate a thigh and the leg follows — instead of a per-frame wall.
+- **Scenes survive.** Every session autosaves as `projects/<doc_id>/scene.json`
+  (sampled poses, not code — exact by construction). Restart the server, ask for
+  the same doc_id, get a byte-identical render.
+- **Faces, as data.** Bodies carry slots; face assets carry swappable attachments
+  (`happy`, `sad`, `surprised`, `blink`); `set_expression` hold-keys exactly one
+  visible. The same face document reads correctly on an upright human head and a
+  tilted dog head.
+- **One thread owns Qt.** The MCP event loop stays responsive during renders and
+  scripts; every Qt object only ever sees the worker thread.
+
+---
+
 ## What it can animate
 
 The core abstraction is **a rig is a graph of joints; a gait is a table of
@@ -83,7 +132,7 @@ ln -sf ~/src/glaxnimate/build/bin/plugin/python/build/lib/glaxnimate.cpython-314
     .venv/lib/python3.14/site-packages/
 
 # 3. Verify
-.venv/bin/python -m pytest -q          # 28 tests
+.venv/bin/python -m pytest -q          # 97 tests
 ```
 
 `setup.sh` builds the GUI app to `/usr/local/bin/glaxnimate` too, so you can open
@@ -198,7 +247,7 @@ as a character? is the composition any good?* — does it render an image. Final
 `preview_for_human` hands **you** a GIF, because your one sentence of feedback
 ("legs too stiff") is the highest-signal input in the whole system.
 
-### The 13 tools
+### The 17 tools
 
 | Tool | Tier | Purpose |
 |---|---|---|
@@ -211,6 +260,8 @@ as a character? is the composition any good?* — does it render an image. Final
 | `render_contact_sheet` | 2 · image | whole motion as one numbered grid |
 | `render_frame` | 2 · image | one frame, full size |
 | `render_motion_trail` | 2 · image | onion-skin, for checking arcs |
+| `save_asset` / `load_asset` / `list_assets` | assets | grow the vocabulary: new creatures, gaits, props, faces as JSON |
+| `describe_scene` | build | the scene as readable data (scenes persist across restarts) |
 | `export` | output | Lottie · MP4 · WebM · WebP · GIF · SVG · PNG · rawr |
 | `preview_for_human` | 4 · human | write a GIF for you to watch |
 | `open_in_gui` | gui | open the scene in Glaxnimate |

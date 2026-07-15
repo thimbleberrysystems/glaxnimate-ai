@@ -11,6 +11,13 @@ Not a thin wrapper over Glaxnimate's API. Two constraints drive the design:
    phase-offset gait engine. A human is one preset among many (quadruped, bird,
    vehicle, blob). **Scope is "animate anything", not "animate people"** — if a
    change only works for humanoids, it is wrong.
+
+   v2 makes this literal: **content is data, code is engine.** Bodies, gaits,
+   props and faces are validated JSON in `assets/` (see `cartoon/assets.py`);
+   scenes autosave as JSON in `projects/` and survive restarts (`engine/
+   scene_doc.py` — sampled poses, not code). The keyframe reducer
+   (`engine/reduce.py`) bakes a parented bone-layer skeleton with ~10× fewer
+   keys than dense sampling, so exports are editable puppets in the GUI.
 2. **An LLM animating blind produces garbage — but most of the fix is arithmetic,
    not vision.** Feedback is a tiered critic stack, cheapest first: a free linter
    (contact slip, joint integrity, bounds) → numeric diagnostics (spacing charts,
@@ -44,8 +51,13 @@ API reference after any rebuild:
 
 **`docs/glaxnimate-api.md` is the source of truth — the online docs are a version
 behind and will mislead you** (they still show `document.main`, which no longer
-exists). The worst trap: `Layer.animation.last_frame` defaults to `-1`, so a layer
-is invisible and every frame renders blank, with no error.
+exists). The traps that cost real hours: `Layer.animation.last_frame` defaults to
+`-1` (layer invisible, blank frames, no error); **`set_transition` on a scale
+property segfaults** (upstream bug — scale channels get linear keys instead);
+**never enter `environment.Headless()` twice in one process** and never let Qt
+documents be GC'd mid-flight — the environment is a process singleton and scenes
+are pinned (`engine/session.py`). Under the MCP server, all Qt runs on ONE worker
+thread (`mcp/server.py::qt_tool`) — keep it that way.
 
 ## Commits
 

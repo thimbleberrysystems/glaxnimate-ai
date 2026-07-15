@@ -19,7 +19,8 @@ check its feet without being told twice.
 from __future__ import annotations
 
 import io
-import signal
+import sys
+import time
 import traceback
 from contextlib import ExitStack, redirect_stdout
 from dataclasses import dataclass, field
@@ -475,20 +476,31 @@ class Session:
         return session
 
     # ---------------------------------------------------------------- running
-    def run(self, code: str, *, timeout: int = 20) -> ScriptResult:
+    def run(self, code: str, *, timeout: float = 20.0) -> ScriptResult:
         """Execute a script against this session, capturing output and tracebacks.
 
         The traceback goes straight back to the model, which is the point: it reads
         the error and fixes itself, which is far cheaper than a round of rendering.
+
+        The timeout is a trace hook, not SIGALRM. SIGALRM only works on the main
+        thread — under the MCP server, scripts run on the dedicated Qt worker
+        thread, where signal.signal raises ValueError (found by calling the tool
+        the way the server actually does, not the way the unit tests did). The
+        tracer interrupts any Python-level runaway (the realistic failure: an LLM
+        writes an infinite loop); a hang inside a C call would not be caught,
+        which is an accepted limit, not an oversight.
         """
-
-        def _alarm(_sig, _frm):
-            raise _Timeout(f"script exceeded {timeout}s")
-
         ns = self.namespace()
         buf = io.StringIO()
-        old = signal.signal(signal.SIGALRM, _alarm)
-        signal.alarm(timeout)
+        deadline = time.monotonic() + timeout
+
+        def tracer(frame, event, arg):  # noqa: ARG001
+            if time.monotonic() > deadline:
+                raise _Timeout(f"script exceeded {timeout:g}s")
+            return tracer
+
+        old_trace = sys.gettrace()
+        sys.settrace(tracer)
         try:
             with redirect_stdout(buf):
                 exec(compile(code, "<script>", "exec"), ns)  # noqa: S102 - by design
@@ -501,8 +513,7 @@ class Session:
             tb = traceback.format_exc(limit=6)
             return ScriptResult(False, buf.getvalue(), tb)
         finally:
-            signal.alarm(0)
-            signal.signal(signal.SIGALRM, old)
+            sys.settrace(old_trace)
 
 
 # The one Glaxnimate environment for the whole process. This must be a process
