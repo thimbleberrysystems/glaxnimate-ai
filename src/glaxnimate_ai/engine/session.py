@@ -73,6 +73,8 @@ class Session:
     ground_y: float
     frames: int
     characters: list[Character] = field(default_factory=list)
+    #: (name, samples, radius) for every non-rig object, so the critic sees them.
+    objects: list[tuple] = field(default_factory=list)
 
     @classmethod
     def create(
@@ -143,6 +145,13 @@ class Session:
         return ch
 
     def _add_object(self, samples, **kw):
+        # Register the samples so the critic can see the object too — in v1 only
+        # rig characters were checkable and a ball through the floor was invisible.
+        samples = list(samples)
+        size = kw.get("size")
+        radius = (size.y / 2.0) if size is not None else 40.0
+        self.objects.append((kw.get("layer_name", f"object{len(self.objects)}"),
+                             samples, radius))
         return bake_samples(self.scene, samples, **kw)
 
     def _add_chaser(

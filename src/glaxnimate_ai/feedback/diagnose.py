@@ -3,6 +3,10 @@
 The linter says whether the animation is broken. This says whether it is any
 good — and it does so with arithmetic, not pixels.
 
+v2: the instruments read the **Timeline IR** (plain sampled data), so they can
+judge anything that produces a timeline — not just rigs registered in-process.
+`diagnose_rig` stays as a wrapper over the old signature.
+
 That is the central bet of this project. Animators do not judge motion by staring
 at it; they use instruments, and every one of those instruments is a number:
 
@@ -12,8 +16,9 @@ at it; they use instruments, and every one of those instruments is a number:
 * **Arc trace** — living things move in arcs; only machines move in straight lines
   and only broken rigs zigzag. Counting direction reversals turns "that hand looks
   wobbly" into "the hand reverses direction 4 times between frames 8 and 14".
-* **Balance** — a figure whose centre of mass is outside its support would fall
-  over. That is not an aesthetic judgement, it is statics.
+* **Balance** — a *stationary* figure whose centre of mass is outside its support
+  would fall over. Statics, not opinion — and only meaningful when still, because
+  walking is controlled falling.
 * **Silhouette** — animators check the pose reads as a black shape. So can we:
   measure how much of the limbs is hidden inside the torso.
 
@@ -28,11 +33,14 @@ import statistics
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from ..cartoon import timeline as tlmod
 from ..cartoon.geometry import Vec2
 from ..cartoon.presets import Body
 from ..cartoon.rig import Pose
+from ..cartoon.timeline import Timeline
 
-__all__ = ["Finding", "Diagnosis", "spacing_chart", "arc_quality", "diagnose_rig"]
+__all__ = ["Finding", "Diagnosis", "spacing_chart", "arc_quality",
+           "diagnose_timeline", "diagnose_rig"]
 
 
 @dataclass(slots=True)
@@ -115,46 +123,42 @@ def arc_quality(points: list[Vec2]) -> dict[str, float]:
 
 
 # ------------------------------------------------------------------ posture
-def _centre_of_mass(frame, rig) -> Vec2:
-    """Mass-weighted centroid.
+def _centre_of_mass(tl: Timeline, f: int) -> Vec2:
+    """Mass-weighted centroid at frame `f`.
 
-    Uses `Joint.mass` where the rig declares it, falling back to bone length. The
+    Uses declared masses where the rig has them, falling back to bone length. The
     fallback is a poor model on purpose-built rigs: length-weighting gives the legs
     ~57% of a humanoid's mass and anchors the centre of mass so firmly that a figure
-    bent double still measures as balanced. Declaring masses moves the legs to ~30%,
-    which is roughly true of people, and the check starts working.
+    bent double still measures as balanced. Declared masses (~30% legs, true of
+    people) make the check work.
     """
     total, acc = 0.0, Vec2()
-    for name, jf in frame.items():
-        j = rig.joints[name]
-        w = j.mass if j.mass > 0 else max(j.length, 1.0)
-        mid = (jf.origin + jf.tip) * 0.5
+    for t in tl.nodes.values():
+        w = t.mass if t.mass > 0 else max(t.length, 1.0)
+        mid = (t.origin[f] + t.tip[f]) * 0.5
         acc = acc + mid * w
         total += w
     return acc / total if total else Vec2()
 
 
-def diagnose_rig(
-    body: Body,
-    pose_fn: Callable[[float], Pose],
+def diagnose_timeline(
+    tl: Timeline,
     *,
-    frames: int,
     ground_y: float,
     track: str | None = None,
     contact_tol: float = 1.5,
 ) -> Diagnosis:
-    """Measure the craft: timing, arcs, balance, silhouette.
-
-    `track` names the joint whose path is checked for arc quality — a hand, the
-    head, whatever carries the eye. Defaults to the first non-contact tip.
-    """
-    rig = body.rig
-    world = [rig.solve(pose_fn(float(f))) for f in range(frames + 1)]
+    """Measure the craft on sampled data: timing, arcs, balance, silhouette."""
     d = Diagnosis()
+    n_frames = min((len(t.origin) for t in tl.nodes.values()), default=0)
+    if n_frames == 0:
+        return d
+
+    root = tl.root if tl.root in tl.nodes else next(iter(tl.nodes))
+    root_track = tl.nodes[root]
 
     # --- Spacing: does the body ease, or does it slide at constant speed?
-    root_path = [w[rig.root_name].origin for w in world]
-    sp = spacing_chart(root_path)
+    sp = spacing_chart(root_track.origin)
     # A constant-speed walk is correct (the body really does advance evenly), so
     # this is reported, not condemned. It matters for *gestures*, not locomotion.
     d.add(
@@ -164,11 +168,12 @@ def diagnose_rig(
     )
 
     # --- Arcs on a tracked extremity.
-    if track is None:
-        tips = [n for n in rig.joints if not rig.joints[n].contact and rig.joints[n].length > 0]
-        track = tips[0] if tips else rig.root_name
-    path = [w[track].tip for w in world]
-    aq = arc_quality(path)
+    if track is None or track not in tl.nodes:
+        track = next(
+            (n for n, t in tl.nodes.items() if not t.contact and t.length > 0),
+            root,
+        )
+    aq = arc_quality(tl.nodes[track].tip)
     d.add(
         "arc_reversals", aq["reversals"],
         "good" if aq["reversals"] <= 4 else "poor",
@@ -178,33 +183,26 @@ def diagnose_rig(
     # --- Balance. Statics, so it only means anything when the figure is *still*.
     #
     # Walking is controlled falling: on every step the centre of mass legitimately
-    # travels out beyond the planted foot, and the next foot catches it. Applied to
-    # a walk, this check fires on healthy motion — measured on our own clean walk it
-    # reads 0.199 leg-lengths of overhang, against 0.297 for a figure bent double.
-    # It barely separates them, so no threshold rescues it there.
-    #
-    # Held poses are different: a standing character with its mass outside its feet
-    # would simply fall over. So evaluate only near-stationary frames, and say so
-    # plainly when there are none rather than inventing a verdict.
+    # travels out beyond the planted foot, and the next foot catches it. So only
+    # near-stationary frames are judged, and the report says so plainly when there
+    # are none rather than inventing a verdict.
+    contacts = tl.contacts
     still_overhangs: list[float] = []
-    # Start at 1: frame 0 has no predecessor, so its speed is unknowable. Counting
-    # it as "stationary" would make a walking figure report a balance score under
-    # the heading "while standing" — a number that is not wrong so much as about
-    # something else entirely.
-    for f in range(1, len(world)):
-        w, prev = world[f], world[f - 1]
-        moving = w[rig.root_name].origin.distance_to(prev[rig.root_name].origin)
+    leg = tl.leg_length or 1.0
+    for f in range(1, n_frames):
+        moving = root_track.origin[f].distance_to(root_track.origin[f - 1])
         if moving > 0.75:
             continue  # locomoting: not a statics problem
         planted = [
-            w[c].tip.x for c in rig.contacts if abs(w[c].tip.y - ground_y) <= contact_tol
+            tl.nodes[c].tip[f].x for c in contacts
+            if abs(tl.nodes[c].tip[f].y - ground_y) <= contact_tol
         ]
         if not planted:
             continue  # airborne: nothing to balance on
-        com = _centre_of_mass(w, rig)
+        com = _centre_of_mass(tl, f)
         lo, hi = min(planted), max(planted)
         past = max(lo - com.x, com.x - hi, 0.0)
-        still_overhangs.append(past / body.leg_length)
+        still_overhangs.append(past / leg)
 
     if still_overhangs:
         worst = max(still_overhangs)
@@ -221,17 +219,33 @@ def diagnose_rig(
         )
 
     # --- Silhouette: do the limbs read, or are they buried in the torso?
-    hidden = 0
-    for w in world:
-        xs = [w[c].tip.x for c in rig.contacts]
-        root_x = w[rig.root_name].origin.x
-        spread = max(abs(x - root_x) for x in xs) if xs else 0.0
-        if spread < body.leg_length * 0.12:
-            hidden += 1
-    frac = hidden / len(world)
-    d.add(
-        "silhouette_flat", frac, "good" if frac < 0.35 else "poor",
-        "fraction of frames where the limbs collapse onto the body axis",
-    )
+    if contacts and tl.leg_length > 0:
+        hidden = 0
+        for f in range(n_frames):
+            xs = [tl.nodes[c].tip[f].x for c in contacts]
+            root_x = root_track.origin[f].x
+            spread = max(abs(x - root_x) for x in xs) if xs else 0.0
+            if spread < tl.leg_length * 0.12:
+                hidden += 1
+        frac = hidden / n_frames
+        d.add(
+            "silhouette_flat", frac, "good" if frac < 0.35 else "poor",
+            "fraction of frames where the limbs collapse onto the body axis",
+        )
 
     return d
+
+
+# ------------------------------------------------------------------ wrappers
+def diagnose_rig(
+    body: Body,
+    pose_fn: Callable[[float], Pose],
+    *,
+    frames: int,
+    ground_y: float,
+    track: str | None = None,
+    contact_tol: float = 1.5,
+) -> Diagnosis:
+    """Sample a rig animation and diagnose it (v1-compatible signature)."""
+    tl = tlmod.from_pose_fn(body, pose_fn, frames=frames)
+    return diagnose_timeline(tl, ground_y=ground_y, track=track, contact_tol=contact_tol)

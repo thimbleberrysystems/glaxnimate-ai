@@ -25,7 +25,7 @@ from PIL import Image
 from ..engine.session import SessionStore
 from ..feedback import render as R
 from ..feedback.diagnose import diagnose_rig
-from ..feedback.lint import lint_rig
+from ..feedback.lint import lint_object, lint_rig
 
 mcp = FastMCP("glaxnimate-ai")
 store = SessionStore()
@@ -104,16 +104,20 @@ def lint_animation(doc_id: str) -> str:
     below the ground, strobing, NaNs, anything off-canvas.
     """
     s = store.get(doc_id)
-    if not s.characters:
-        return "no characters registered; nothing to lint (use add_character)"
+    if not s.characters and not s.objects:
+        return "nothing registered to lint (use add_character / add_object)"
 
+    canvas = (int(s.scene.comp.width), int(s.scene.comp.height))
     out = []
     for ch in s.characters:
         rep = lint_rig(
             ch.body, ch.pose_fn, frames=s.frames, ground_y=s.ground_y,
-            limbs=ch.gait.limbs, canvas=(s.scene.comp.width, s.scene.comp.height),
+            limbs=ch.gait.limbs if ch.gait else None, canvas=canvas,
         )
         out.append(f"{ch.name}: {rep.format()}")
+    for name, samples, radius in s.objects:
+        rep = lint_object(name, samples, ground_y=s.ground_y, radius=radius, canvas=canvas)
+        out.append(f"{name}: {rep.format()}")
     return "\n".join(out)
 
 
