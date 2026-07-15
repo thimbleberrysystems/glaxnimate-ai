@@ -211,3 +211,79 @@ def test_script_errors_come_back_as_a_usable_message():
     assert not res.ok
     assert "moonwalk" in res.format()
     assert "walk" in res.format()  # it lists the gaits that DO exist
+
+
+# ------------------------------------------------- gaps found by driving the loop
+def test_reach_guard_rejects_unreachable_gait_at_construction():
+    """The face-plant bug: a gait that over-reaches must fail at make_gait, not lint.
+
+    The old guard only checked the stance pose, so a gallop passed construction and
+    then over-extended during swing — a face-planting mess that only surfaced later.
+    """
+    from glaxnimate_ai.cartoon.presets import make_gait, quadruped
+
+    dog = quadruped()
+    with pytest.raises(ValueError, match="reach"):
+        # an absurd stride the legs cannot possibly cover
+        make_gait(dog, "gallop", cycle_frames=18, stride=400)
+
+
+def test_every_default_gait_reaches_on_its_default_body():
+    """Out of the box, no gait may over-extend — including the fast ones."""
+    from glaxnimate_ai.cartoon.gait import GAIT_TABLE
+    from glaxnimate_ai.cartoon.presets import biped, make_gait, quadruped
+
+    for gait_name in GAIT_TABLE:
+        for maker in (biped, quadruped):
+            body = maker()
+            if len(body.limbs) not in GAIT_TABLE[gait_name]:
+                continue
+            make_gait(body, gait_name, cycle_frames=20)  # must not raise
+
+
+def test_gallop_renders_clean_end_to_end():
+    """The gallop that used to face-plant now lints clean when actually posed."""
+    from glaxnimate_ai.cartoon.presets import make_gait, quadruped
+
+    dog = quadruped()
+    gait = make_gait(dog, "gallop", cycle_frames=16)
+
+    def pose_fn(t: float):
+        return pose_at(dog.rig, gait, t, ground_y=GROUND, body_x0=80)
+
+    rep = lint_rig(dog, pose_fn, frames=48, ground_y=GROUND, limbs=gait.limbs)
+    assert rep.ok, rep.format()
+
+
+def test_pace_carries_the_body_the_requested_distance():
+    """pace sizes a gait to travel a stated distance — the coordination fix."""
+    from glaxnimate_ai.cartoon.presets import pace, quadruped
+
+    dog = quadruped()
+    gait = pace(dog, "trot", distance=560, frames=72, cycle_frames=16)
+    assert abs(gait.speed * 72 - 560) < 1.0, "paced gait must travel the requested distance"
+
+
+def test_pace_rejects_the_impossible_with_advice():
+    from glaxnimate_ai.cartoon.presets import pace, quadruped
+
+    dog = quadruped()
+    with pytest.raises(ValueError, match="frames|distance|longer legs"):
+        pace(dog, "gallop", distance=4000, frames=20)  # 200px/frame, no legs reach
+
+
+def test_add_chaser_ends_behind_the_target():
+    """The whole coordination problem, one call: chaser ends `gap` behind the ball."""
+    from glaxnimate_ai.engine.session import SessionStore
+
+    s = SessionStore().create(width=1000, height=440, frames=72)
+    s.run(
+        "ball = motion.bounce(x0=140, x1=660, ground_y=ground, apex=185, "
+        "frames=frames, bounces=6, radius=26)\n"
+        "add_object(ball)\n"
+        "add_chaser(quadruped(), 'trot', ball, x=70, gap=40, cycle_frames=16, name='dog')\n"
+    )
+    dog = s.characters[0]
+    end_x = dog.pose_fn(float(s.frames)).root.x
+    # the ball stops at ~660; the dog should end ~40 behind it, not in the dust
+    assert 580 < end_x < 640, f"chaser ended at {end_x:.0f}, not trailing the ball"

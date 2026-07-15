@@ -11,14 +11,21 @@ walk *and* a correct diagonal trot without either knowing about the other.
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 
-from .gait import GAIT_DEFAULTS, HIP_HEIGHT_RATIO, Gait, Limb, Swing, gait_phases
+from .gait import (
+    GAIT_DEFAULTS,
+    HIP_HEIGHT_RATIO,
+    Gait,
+    Limb,
+    Swing,
+    gait_phases,
+    reach_needed,
+)
 from .geometry import Vec2
 from .rig import Joint, Pose, Rig
 
-__all__ = ["Body", "Part", "biped", "human", "quadruped", "make_gait"]
+__all__ = ["Body", "Part", "biped", "human", "quadruped", "make_gait", "pace"]
 
 
 @dataclass(slots=True)
@@ -234,23 +241,81 @@ def make_gait(body: Body, name: str = "walk", **overrides) -> Gait:
 
     d = dict(GAIT_DEFAULTS.get(name, GAIT_DEFAULTS["walk"]))
     h = body.hip_height
+    # stride/lift/bob scale with the animal's size (standing hip height); only the
+    # ride height is lowered by the crouch, which is what buys the reach margin.
     params = {
         "duty": d["duty"],
         "lean": d["lean"],
         "stride": d["stride"] * h,
         "lift": d["lift"] * h,
         "bob": d["bob"] * h,
+        "ride_height": d.get("crouch", 1.0) * h,
     }
     params.update(overrides)
 
     gait = Gait(limbs=limbs, swings=list(body.swings), **params)
-
-    # Worst case: hip at the top of its bob, foot at the far end of its stance.
-    reach = math.hypot(gait.stride * gait.duty / 2.0, h + gait.bob)
-    leg = body.leg_length
-    if reach > leg:
-        raise ValueError(
-            f"{name!r} needs a reach of {reach:.1f} but the leg is only {leg:.1f} long. "
-            f"Shorten the stride, lower the bob, or lengthen the leg."
-        )
+    _check_reach(body, gait, name)
     return gait
+
+
+def _check_reach(body: Body, gait: Gait, name: str) -> None:
+    """Fail loudly at construction if any leg is asked to reach past its length.
+
+    The old guard estimated only the *stance* pose and so passed demanding gaits —
+    a gallop — that then over-extended during swing and produced a face-planting,
+    skating mess that only surfaced at lint time. This measures the actual reach
+    over the whole cycle (`gait.reach_needed`) and names the offending limb.
+    """
+    needed = reach_needed(body.rig, gait)  # uses gait.ride_height
+    for limb in gait.limbs:
+        leg = body.rig.joints[limb.upper].length + body.rig.joints[limb.lower].length
+        d = needed[limb.upper]
+        # 2% headroom: a leg at exactly full extension is straight and looks stiff,
+        # and the IK is one rounding error from failing.
+        if d > leg * 0.98:
+            raise ValueError(
+                f"{name!r} asks {limb.upper} to reach {d:.0f}px but it is only {leg:.0f}px "
+                f"long. Shorten the stride, lower lift/bob, or give the body longer "
+                f"legs. (Try `pace(body, {name!r}, distance, frames)` to size it "
+                f"automatically.)"
+            )
+
+
+def pace(
+    body: Body,
+    name: str,
+    *,
+    distance: float,
+    frames: int,
+    cycle_frames: float = 20.0,
+    **overrides,
+) -> Gait:
+    """A gait tuned to carry `body` exactly `distance` px in `frames` frames.
+
+    This is the fix for "the chaser lost the race". You state where the character
+    should *end up*; this picks the stride to get there and then checks the legs
+    can reach it, backing off `lift` before giving up. Use it whenever a character
+    must arrive somewhere specific — chasing a ball, crossing to a door, meeting
+    another character.
+    """
+    if frames <= 0:
+        raise ValueError("frames must be positive")
+    stride = distance / frames * cycle_frames
+
+    base_lift = GAIT_DEFAULTS.get(name, GAIT_DEFAULTS["walk"])["lift"] * body.hip_height
+
+    # Try the requested stride; if the legs can't reach, trim the foot lift (the
+    # cheapest thing to give up — stride is the whole point of pacing) before
+    # failing outright.
+    for lift_scale in (1.0, 0.7, 0.5, 0.35):
+        over = {"lift": base_lift * lift_scale, **overrides}
+        try:
+            return make_gait(body, name, cycle_frames=cycle_frames, stride=stride, **over)
+        except ValueError:
+            continue
+
+    raise ValueError(
+        f"a {name!r} covering {distance:.0f}px in {frames} frames needs a stride of "
+        f"{stride:.0f}px, which {body.leg_length:.0f}px legs cannot reach even with a "
+        f"low foot lift. Use more frames, a shorter distance, or longer legs."
+    )

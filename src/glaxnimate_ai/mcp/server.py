@@ -280,10 +280,24 @@ every creature.
   names: walk, run, trot, gallop, bound, hop
          (bipeds: walk/run/hop. quadrupeds: all six.)
   overrides: stride, duty, lift, bob, lean  (defaults scale with body size)
+  A FASTER move comes from a SHORTER cycle_frames, not a longer stride — stride
+  is bounded by leg length, and make_gait will reject a stride the legs cannot
+  reach (it tells you by how much). Fast gaits crouch automatically.
+
+  pace(body, name, distance=, frames=, cycle_frames=16) -> Gait
+    A gait tuned to travel exactly `distance` px in `frames`. Use this when a
+    character must ARRIVE somewhere — a door, a mark, another character.
 
 STAGE
-  add_character(body, gait, x=80, name="...", color="#3b3b46", thickness=14)
+  add_character(body, gait, x=80, name="...", color=None, thickness=None)
+     color/thickness default to None = use the body's own skin (a person looks
+     like a person). Pass them only to flatten to one colour.
   add_object(samples, shape="Ellipse", size=Vec2(w,h), color="#e8543f")
+  add_chaser(body, gait_name, target, x=60, gap=40, cycle_frames=16, name="...")
+     A character PACED to chase `target` (a motion.* result) and end `gap` px
+     behind it. Solves "the chaser lost the race" in one call — no per-frame
+     metric catches that, because each character is individually fine; it is the
+     relationship that is wrong.
 
 MOTION (things without legs; no rig needed)
   motion.bounce(x0=, x1=, ground_y=, apex=, frames=, bounces=5, restitution=.62, radius=40)

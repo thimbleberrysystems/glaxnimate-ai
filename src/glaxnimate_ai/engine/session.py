@@ -107,10 +107,11 @@ class Session:
         """
 
         def pose_fn(t: float):
-            return pose_at(
-                body.rig, gait, t,
-                ground_y=self.ground_y, body_x0=x, hip_height=body.hip_height,
-            )
+            # No hip_height here on purpose: pose_at reads the gait's own
+            # ride_height, so a crouched gallop stays crouched. Passing
+            # body.hip_height would stand the figure back up and over-extend the
+            # legs — the exact bug that made the gallop face-plant.
+            return pose_at(body.rig, gait, t, ground_y=self.ground_y, body_x0=x)
 
         bake_rig(
             self.scene, body, pose_fn, frames=self.frames,
@@ -122,6 +123,44 @@ class Session:
 
     def _add_object(self, samples, **kw):
         return bake_samples(self.scene, samples, **kw)
+
+    def _add_chaser(
+        self,
+        body: Body,
+        gait_name: str,
+        target,
+        *,
+        x: float = 60.0,
+        gap: float = 40.0,
+        cycle_frames: float = 16.0,
+        name: str = "chaser",
+        **char_kw,
+    ) -> Character:
+        """A character paced to chase a moving target and end `gap` px behind it.
+
+        This is the fix for the coordination gap: no per-character metric can see
+        that a chaser is losing the race, because each character is individually
+        fine — it is the *relationship* that is wrong. `pace` sizes the gait so the
+        character actually arrives where the target ends up.
+
+        `target` is anything with `.pos.x` samples (a `motion.*` result) or a plain
+        final x-coordinate.
+        """
+        if hasattr(target, "__iter__") and not isinstance(target, (int, float)):
+            target_end = max(smp.pos.x for smp in target)
+        else:
+            target_end = float(target)
+
+        distance = (target_end - gap) - x
+        if distance <= 0:
+            raise ValueError(
+                f"the chaser starts at x={x} but only needs to reach "
+                f"{target_end - gap:.0f} — it is already there. Start it further back."
+            )
+        gait = presets.pace(
+            body, gait_name, distance=distance, frames=self.frames, cycle_frames=cycle_frames
+        )
+        return self._add_character(body, gait, x=x, name=name, **char_kw)
 
     def namespace(self) -> dict[str, Any]:
         """What a script sees. Deliberately small — this is the LLM's vocabulary."""
@@ -137,9 +176,11 @@ class Session:
             "biped": presets.biped,
             "quadruped": presets.quadruped,
             "make_gait": presets.make_gait,
+            "pace": presets.pace,
             # the stage
             "add_character": self._add_character,
             "add_object": self._add_object,
+            "add_chaser": self._add_chaser,
             "scene": self.scene,
             "ground": self.ground_y,
             "frames": self.frames,

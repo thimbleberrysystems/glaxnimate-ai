@@ -25,7 +25,8 @@ from .geometry import Vec2
 from .principles import ease_in_out
 from .rig import Pose, Rig, solve_two_bone
 
-__all__ = ["Limb", "Swing", "Gait", "gait_phases", "GAIT_TABLE", "pose_at", "foot_target"]
+__all__ = ["Limb", "Swing", "Gait", "gait_phases", "GAIT_TABLE", "pose_at", "foot_target",
+           "reach_needed", "body_pose", "is_planted"]
 
 
 @dataclass(slots=True)
@@ -76,6 +77,11 @@ class Gait:
     lift: float = 30.0
     bob: float = 6.0
     lean: float = 0.0
+    #: How high the hips ride, in absolute units. Set by `make_gait` from the body
+    #: and the gait's crouch: a galloping animal *gathers* — it rides lower than a
+    #: walking one — which is both physically true and what gives a fast gait's
+    #: legs the reach margin they need. 0 means "caller supplies hip_height".
+    ride_height: float = 0.0
 
     @property
     def speed(self) -> float:
@@ -101,13 +107,24 @@ GAIT_TABLE: dict[str, dict[int, list[float]]] = {
 #: pixels: a dachshund and a giraffe take very different strides, and the number
 #: that is actually constant across animals is the ratio. `presets.make_gait`
 #: turns these into absolute units for a given body.
+# Stride and lift are tuned so every gait *reaches* on its default body — the
+# reach guard in `make_gait` now enforces this, and run/gallop were originally set
+# a touch too aggressive (they over-extended by 5-10px). A faster look comes from a
+# shorter cycle_frames, not a longer stride: speed = stride / cycle_frames, and only
+# stride is bounded by leg length.
+# `crouch` lowers the hips for fast gaits. A galloping animal gathers its body
+# closer to the ground than a standing one — this is real locomotion, and it is
+# also what gives a fast gait's legs the reach margin they need. Without it, the
+# reach is dominated by hip height and a gallop cannot fit on any leg (the whole
+# rig scales together, so longer legs do not help — only a lower ride does).
+# keys: duty, stride, lift, bob (fractions of hip height), lean (deg), crouch.
 GAIT_DEFAULTS: dict[str, dict[str, float]] = {
-    "walk": {"duty": 0.62, "stride": 0.85, "lift": 0.18, "bob": 0.04, "lean": 0.0},
-    "run": {"duty": 0.35, "stride": 1.30, "lift": 0.35, "bob": 0.09, "lean": -8.0},
-    "trot": {"duty": 0.45, "stride": 1.00, "lift": 0.22, "bob": 0.05, "lean": 0.0},
-    "gallop": {"duty": 0.30, "stride": 1.50, "lift": 0.40, "bob": 0.10, "lean": -6.0},
-    "bound": {"duty": 0.35, "stride": 1.30, "lift": 0.35, "bob": 0.10, "lean": 0.0},
-    "hop": {"duty": 0.50, "stride": 0.80, "lift": 0.35, "bob": 0.12, "lean": 0.0},
+    "walk":   {"duty": 0.62, "stride": 0.85, "lift": 0.18, "bob": 0.04, "lean": 0.0, "crouch": 1.00},  # noqa: E501
+    "run":    {"duty": 0.35, "stride": 1.08, "lift": 0.28, "bob": 0.08, "lean": -8.0, "crouch": 0.86},  # noqa: E501
+    "trot":   {"duty": 0.45, "stride": 1.00, "lift": 0.22, "bob": 0.05, "lean": 0.0, "crouch": 0.96},  # noqa: E501
+    "gallop": {"duty": 0.30, "stride": 1.20, "lift": 0.28, "bob": 0.08, "lean": -6.0, "crouch": 0.84},  # noqa: E501
+    "bound":  {"duty": 0.35, "stride": 1.18, "lift": 0.30, "bob": 0.09, "lean": 0.0, "crouch": 0.86},  # noqa: E501
+    "hop":    {"duty": 0.50, "stride": 0.76, "lift": 0.30, "bob": 0.11, "lean": 0.0, "crouch": 0.90},  # noqa: E501
 }
 
 #: Hips ride at this fraction of full leg length. A standing figure does *not*
@@ -175,6 +192,57 @@ def body_position(gait: Gait, t: float, ground_y: float, body_x0: float, hip_hei
 
 
 # --------------------------------------------------------------------- posing
+def body_pose(gait: Gait, t: float, ground_y: float, body_x0: float, hip_height: float) -> Pose:
+    """The pose before the legs are solved: body placement + secondary motion.
+
+    Split out from `pose_at` so the reach check can find where each hip *is*
+    without triggering the leg IK (which clamps, and so would hide the very
+    over-extension we are trying to measure).
+    """
+    pose = Pose(
+        root=body_position(gait, t, ground_y, body_x0, hip_height),
+        root_angle=gait.lean,
+    )
+    cyc = t / gait.cycle_frames
+    for s in gait.swings:
+        pose.angles[s.joint] = s.amplitude * math.sin(2.0 * math.pi * (cyc + s.phase))
+    return pose
+
+
+def _ride(gait: Gait, hip_height: float | None) -> float:
+    """Resolve the hip height: an explicit override wins, else the gait's own."""
+    if hip_height is not None:
+        return hip_height
+    if gait.ride_height > 0:
+        return gait.ride_height
+    raise ValueError("no hip height: pass hip_height, or build the gait with make_gait")
+
+
+def reach_needed(rig: Rig, gait: Gait, hip_height: float | None = None) -> dict[str, float]:
+    """Largest hip→foot-target distance for each limb, sampled over one whole cycle.
+
+    This is the reach the IK is actually asked for. If it exceeds a leg's length,
+    that leg straightens and falls short and the foot drags — the quiet skating
+    artefact `lint.ik_overextension` catches per frame.
+
+    Sampling the **whole cycle** is the entire point. The foot reaches farthest
+    during swing, not during stance, so a stance-only estimate (what the old guard
+    used) passes a gallop at construction and then fails at lint. Distances are
+    translation-invariant, so the sample origin is arbitrary.
+    """
+    h = _ride(gait, hip_height)
+    n = max(int(gait.cycle_frames), 8)
+    worst: dict[str, float] = {}
+    for i in range(n):
+        t = i / n * gait.cycle_frames
+        frames = rig.solve(body_pose(gait, t, 0.0, 0.0, h))
+        for limb in gait.limbs:
+            hip = frames[limb.upper].origin
+            d = hip.distance_to(foot_target(gait, limb, t, 0.0, 0.0))
+            worst[limb.upper] = max(worst.get(limb.upper, 0.0), d)
+    return worst
+
+
 def pose_at(
     rig: Rig,
     gait: Gait,
@@ -182,7 +250,7 @@ def pose_at(
     *,
     ground_y: float,
     body_x0: float = 0.0,
-    hip_height: float = 160.0,
+    hip_height: float | None = None,
 ) -> Pose:
     """The rig's full pose at time `t`.
 
@@ -190,17 +258,11 @@ def pose_at(
     where each hip *is*; only then are the legs solved backwards from their foot
     targets. Doing it the other way round would make the hips depend on the legs
     and the feet would drift.
-    """
-    pose = Pose(
-        root=body_position(gait, t, ground_y, body_x0, hip_height),
-        root_angle=gait.lean,
-    )
 
-    # Secondary motion (arms, tail) — driven by the same cycle, so it can never
-    # drift out of sync with the feet.
-    cyc = t / gait.cycle_frames
-    for s in gait.swings:
-        pose.angles[s.joint] = s.amplitude * math.sin(2.0 * math.pi * (cyc + s.phase))
+    `hip_height` defaults to the gait's own `ride_height` (set by `make_gait`), so
+    a crouched gallop stays crouched without the caller having to remember.
+    """
+    pose = body_pose(gait, t, ground_y, body_x0, _ride(gait, hip_height))
 
     # Pass 1: FK. The hips do not depend on the legs, so this settles them.
     frames = rig.solve(pose)
