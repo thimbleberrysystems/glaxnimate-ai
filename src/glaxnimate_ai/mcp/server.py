@@ -355,8 +355,15 @@ every creature.
     A gait tuned to travel exactly `distance` px in `frames`. Use this when a
     character must ARRIVE somewhere — a door, a mark, another character.
 
+FACES (swappable expressions on a slot; stepped, like cut-out animation)
+  add_character(..., face="human")     mount a face asset (human, dog, or yours)
+  set_expression(char_or_name, "happy", frame)   hold-swap at that frame
+  human face: neutral, happy, sad, surprised, blink.  dog: normal, happy.
+  New faces are face.json assets: attachments of prop-schema shapes, authored
+  screen-aligned around the slot point (x = facing, y = down).
+
 STAGE
-  add_character(body, gait, x=80, name="...", color=None, thickness=None)
+  add_character(body, gait, x=80, name="...", color=None, thickness=None, face=None)
      color/thickness default to None = use the body's own skin (a person looks
      like a person). Pass them only to flatten to one colour.
   add_object(samples, shape="Ellipse", size=Vec2(w,h), color="#e8543f")

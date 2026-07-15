@@ -157,3 +157,79 @@ def test_a_data_prop_draws_into_a_scene(library):
     # the bench seat should put opaque pixels near (200, ground-30)
     px = img.load()
     assert px[200, int(s.ground_y) - 30][3] > 0, "the bench did not draw where placed"
+
+
+# ------------------------------------------------------------------ faces
+def test_expression_swap_is_a_radio_button():
+    """At every frame exactly one attachment is visible — by construction."""
+    from glaxnimate_ai.engine.session import SessionStore
+
+    s = SessionStore().create(width=400, height=300, frames=48)
+    res = s.run(
+        "man = human()\n"
+        "ch = add_character(man, make_gait(man, 'walk', cycle_frames=24),"
+        " x=80, name='man', face='human')\n"
+        "set_expression(ch, 'surprised', 20)\n"
+        "set_expression('man', 'blink', 36)\n"   # by name works too
+    )
+    assert res.ok, res.format()
+    ch = s.characters[0]
+    assert ch.expressions == [(20.0, "surprised"), (36.0, "blink")]
+
+    for f in (0, 10, 20, 30, 36, 47):
+        vis = {att: lay.opacity.value_at_time(float(f))
+               for att, lay in ch.face_layers.items()}
+        on = [a for a, v in vis.items() if v > 0.5]
+        assert len(on) == 1, f"frame {f}: visible={on}"
+    # and the right ones: default first, then the swaps
+    assert ch.face_layers["neutral"].opacity.value_at_time(5.0) > 0.5
+    assert ch.face_layers["surprised"].opacity.value_at_time(25.0) > 0.5
+    assert ch.face_layers["blink"].opacity.value_at_time(40.0) > 0.5
+
+
+def test_face_rides_a_tilted_head_too():
+    """The dog's head bone is not upright; the rest-angle compensation must hold."""
+    from glaxnimate_ai.engine.session import SessionStore
+
+    s = SessionStore().create(width=400, height=300, frames=16)
+    res = s.run(
+        "dog = quadruped()\n"
+        "ch = add_character(dog, make_gait(dog, 'trot', cycle_frames=16),"
+        " x=80, name='dog', face='dog')\n"
+        "set_expression(ch, 'happy', 8)\n"
+    )
+    assert res.ok, res.format()
+
+
+def test_expression_errors_teach():
+    from glaxnimate_ai.engine.session import SessionStore
+
+    s = SessionStore().create(width=300, height=200, frames=8)
+    res = s.run(
+        "man = human()\n"
+        "ch = add_character(man, make_gait(man, 'walk'), x=60, name='m', face='human')\n"
+        "set_expression(ch, 'smug', 4)\n"
+    )
+    assert not res.ok
+    assert "smug" in res.format() and "happy" in res.format(), res.format()
+
+    res2 = s.run("set_expression('nobody', 'happy', 0)")
+    assert not res2.ok and "nobody" in res2.format()
+
+
+def test_face_document_validation(library):
+    with pytest.raises(ValueError, match="slot"):
+        A.face_validate({"version": 1, "kind": "face",
+                         "attachments": {"x": [{"type": "rect", "x": 0, "y": 0, "w": 1, "h": 1}]}})
+    with pytest.raises(ValueError, match="attachments"):
+        A.face_validate({"version": 1, "kind": "face", "slot": "face", "attachments": {}})
+    with pytest.raises(ValueError, match="type"):
+        A.face_validate({"version": 1, "kind": "face", "slot": "face",
+                         "attachments": {"x": [{"type": "star"}]}})
+
+
+def test_slots_round_trip_through_body_data():
+    h = human()
+    rebuilt = A.body_from_data(A.body_to_data(h))
+    assert rebuilt.slots == h.slots
+    assert "face" in rebuilt.slots

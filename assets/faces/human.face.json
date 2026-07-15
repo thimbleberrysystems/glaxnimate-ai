@@ -1,0 +1,125 @@
+{
+ "version": 1,
+ "kind": "face",
+ "slot": "face",
+ "attachments": {
+  "neutral": [
+   {
+    "type": "ellipse",
+    "cx": 6,
+    "cy": -12,
+    "w": 7,
+    "h": 7,
+    "color": "#23252c"
+   },
+   {
+    "type": "rect",
+    "x": 1,
+    "y": 6,
+    "w": 9,
+    "h": 2.5,
+    "color": "#23252c"
+   }
+  ],
+  "happy": [
+   {
+    "type": "ellipse",
+    "cx": 6,
+    "cy": -12,
+    "w": 7,
+    "h": 7,
+    "color": "#23252c"
+   },
+   {
+    "type": "polygon",
+    "points": [
+     [
+      0,
+      4
+     ],
+     [
+      5,
+      10
+     ],
+     [
+      12,
+      4
+     ],
+     [
+      5,
+      13
+     ]
+    ],
+    "color": "#23252c"
+   }
+  ],
+  "sad": [
+   {
+    "type": "ellipse",
+    "cx": 6,
+    "cy": -12,
+    "w": 7,
+    "h": 7,
+    "color": "#23252c"
+   },
+   {
+    "type": "polygon",
+    "points": [
+     [
+      0,
+      11
+     ],
+     [
+      5,
+      5
+     ],
+     [
+      12,
+      11
+     ],
+     [
+      5,
+      8
+     ]
+    ],
+    "color": "#23252c"
+   }
+  ],
+  "surprised": [
+   {
+    "type": "ellipse",
+    "cx": 6,
+    "cy": -13,
+    "w": 9,
+    "h": 9,
+    "color": "#23252c"
+   },
+   {
+    "type": "ellipse",
+    "cx": 6,
+    "cy": 7,
+    "w": 8,
+    "h": 11,
+    "color": "#23252c"
+   }
+  ],
+  "blink": [
+   {
+    "type": "rect",
+    "x": 2,
+    "y": -13,
+    "w": 8,
+    "h": 2,
+    "color": "#23252c"
+   },
+   {
+    "type": "rect",
+    "x": 1,
+    "y": 6,
+    "w": 9,
+    "h": 2.5,
+    "color": "#23252c"
+   }
+  ]
+ }
+}

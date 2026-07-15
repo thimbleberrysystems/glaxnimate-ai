@@ -32,6 +32,7 @@ __all__ = [
     "body_to_data", "body_from_data", "save_body", "load_body",
     "prop_validate", "save_prop", "load_prop",
     "register_gait", "save_gait", "load_gait",
+    "face_validate", "save_face", "load_face",
     "save_asset", "load_asset",
 ]
 
@@ -103,6 +104,7 @@ def body_to_data(body: Body) -> dict:
         "bones": list(body.bones),
         "leg_length": body.leg_length,
         "parts": parts,
+        "slots": {k: dict(v) for k, v in body.slots.items()},
     }
 
 
@@ -170,8 +172,14 @@ def body_from_data(data: dict) -> Body:
             tip=float(p.get("tip", 0.0)),
         )
 
+    slots = {}
+    for name, sl in (data.get("slots") or {}).items():
+        if sl.get("bone") not in rig.joints:
+            raise ValueError(f"slot {name!r} references unknown bone {sl.get('bone')!r}")
+        slots[name] = {"bone": sl["bone"], "offset": list(sl.get("offset", [0, 0]))}
+
     return Body(rig=rig, limbs=limbs, swings=swings,
-                leg_length=leg_length, bones=list(bones), parts=parts)
+                leg_length=leg_length, bones=list(bones), parts=parts, slots=slots)
 
 
 def save_body(body: Body | dict, name: str) -> Path:
@@ -281,8 +289,44 @@ def load_prop(name: str) -> dict:
     return prop_validate(json.loads(p.read_text()))
 
 
+# --------------------------------------------------------------------- face
+def face_validate(data: dict) -> dict:
+    """A face is a set of swappable attachments for one slot.
+
+    Shapes use the prop schema, authored screen-aligned around the slot point at
+    the body's rest pose (x = facing direction, y = down): the baker compensates
+    for the slot bone's rest angle, so the same face document reads correctly on
+    an upright human head and a tilted dog head.
+    """
+    _check_version(data, "face")
+    if not data.get("slot"):
+        raise ValueError("a face document needs a 'slot' name (usually 'face')")
+    atts = data.get("attachments")
+    if not atts:
+        raise ValueError("a face needs a non-empty 'attachments' mapping")
+    for shapes in atts.values():
+        prop_validate({"version": VERSION, "kind": "prop", "shapes": shapes})
+    return data
+
+
+def save_face(data: dict, name: str) -> Path:
+    face_validate(data)
+    p = asset_path("face", name)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(data, indent=1))
+    return p
+
+
+def load_face(name: str) -> dict:
+    p = asset_path("face", name)
+    if not p.exists():
+        raise FileNotFoundError(f"no face asset {name!r}; have {list_assets().get('face', [])}")
+    return face_validate(json.loads(p.read_text()))
+
+
 # ------------------------------------------------------------------ generic
-_VALIDATORS = {"body": body_from_data, "gait": register_gait, "prop": prop_validate}
+_VALIDATORS = {"body": body_from_data, "gait": register_gait, "prop": prop_validate,
+               "face": face_validate}
 
 
 def save_asset(kind: str, name: str, data: dict) -> Path:

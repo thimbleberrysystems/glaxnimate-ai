@@ -61,6 +61,10 @@ class Body:
     bones: list[str]
     #: How each bone is skinned. Missing joints fall back to a plain capsule.
     parts: dict[str, Part] = field(default_factory=dict)
+    #: Attachment points for swappable art (Spine's "slots"): name -> {bone, offset}.
+    #: `offset` is in the bone's local space. A face slot on the head is the
+    #: canonical example; the attachments themselves live in face assets.
+    slots: dict[str, dict] = field(default_factory=dict)
 
     @property
     def hip_height(self) -> float:
@@ -135,7 +139,9 @@ def biped(
         "shin_r": Part(width=18, color=FAR),
         "foot_r": Part(width=12, color="#191b21", tip=6),
     }
-    return Body(Rig(joints), limbs, swings, leg_length=thigh + shin, bones=bones, parts=parts)
+    slots = {"face": {"bone": "head", "offset": [head, 8.0]}}
+    return Body(Rig(joints), limbs, swings, leg_length=thigh + shin, bones=bones,
+                parts=parts, slots=slots)
 
 
 def human(**kw) -> Body:
@@ -209,7 +215,9 @@ def quadruped(
         "fore_lower_r": Part(width=12, color=FAR, tip=7),
     }
     del NOSE
-    return Body(Rig(joints), limbs, swings, leg_length=upper + lower, bones=bones, parts=parts)
+    slots = {"face": {"bone": "head", "offset": [head, 10.0]}}
+    return Body(Rig(joints), limbs, swings, leg_length=upper + lower, bones=bones,
+                parts=parts, slots=slots)
 
 
 def make_gait(body: Body, name: str = "walk", **overrides) -> Gait:

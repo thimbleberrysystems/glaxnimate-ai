@@ -184,8 +184,12 @@ def bake_rig(
     joint_radius: float = 0.0,
     layer_name: str = "character",
     stats: dict | None = None,
+    layers_out: dict | None = None,
 ) -> model.shapes.Layer:
     """Build a parented bone-layer rig and key it sparsely.
+
+    `layers_out`, if given, is filled with {joint_name: layer} so callers can
+    parent extra art (face attachments, props held in a hand) to specific bones.
 
     Sampling happens once; every local channel (root path, per-bone local
     rotation) is reduced independently. Local channels are the whole trick: in
@@ -264,6 +268,8 @@ def bake_rig(
     if stats is not None:
         stats["keyframes"] = n_keys
         stats["layers"] = len(layer_of)
+    if layers_out is not None:
+        layers_out.update(layer_of)
 
     return root_layer
 

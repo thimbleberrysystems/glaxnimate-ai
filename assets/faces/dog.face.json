@@ -1,0 +1,51 @@
+{
+ "version": 1,
+ "kind": "face",
+ "slot": "face",
+ "attachments": {
+  "normal": [
+   {
+    "type": "ellipse",
+    "cx": 0,
+    "cy": -8,
+    "w": 6,
+    "h": 6,
+    "color": "#23252c"
+   },
+   {
+    "type": "ellipse",
+    "cx": 14,
+    "cy": 1,
+    "w": 7,
+    "h": 6,
+    "color": "#23252c"
+   }
+  ],
+  "happy": [
+   {
+    "type": "ellipse",
+    "cx": 0,
+    "cy": -8,
+    "w": 6,
+    "h": 6,
+    "color": "#23252c"
+   },
+   {
+    "type": "ellipse",
+    "cx": 14,
+    "cy": 1,
+    "w": 7,
+    "h": 6,
+    "color": "#23252c"
+   },
+   {
+    "type": "ellipse",
+    "cx": 9,
+    "cy": 10,
+    "w": 8,
+    "h": 12,
+    "color": "#e0788a"
+   }
+  ]
+ }
+}

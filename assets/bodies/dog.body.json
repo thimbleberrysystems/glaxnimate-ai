@@ -283,5 +283,14 @@
    "head": null,
    "tip": 7
   }
+ },
+ "slots": {
+  "face": {
+   "bone": "head",
+   "offset": [
+    20.0,
+    10.0
+   ]
+  }
  }
 }

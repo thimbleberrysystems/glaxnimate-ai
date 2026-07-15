@@ -43,6 +43,13 @@ class Character:
     body: Body
     gait: Gait | None
     pose_fn: Any
+    #: attachment name -> its layer, when the character has a face.
+    face_layers: dict = field(default_factory=dict)
+    #: the attachment visible from frame 0.
+    face_default: str = ""
+    #: (frame, attachment) history, for inspection and (later) the scene doc.
+    expressions: list = field(default_factory=list)
+    _face_keyed: bool = False
 
 
 @dataclass(slots=True)
@@ -101,6 +108,7 @@ class Session:
         name: str = "character",
         color: str | None = None,
         thickness: float | None = None,
+        face: str | dict | None = None,
     ) -> Character:
         """Bake a rig into the document and register it with the critic.
 
@@ -116,13 +124,97 @@ class Session:
             # legs — the exact bug that made the gallop face-plant.
             return pose_at(body.rig, gait, t, ground_y=self.ground_y, body_x0=x)
 
+        layers: dict = {}
         bake_rig(
             self.scene, body, pose_fn, frames=self.frames,
-            color=color, thickness=thickness, layer_name=name,
+            color=color, thickness=thickness, layer_name=name, layers_out=layers,
         )
         ch = Character(name, body, gait, pose_fn)
+        if face is not None:
+            self._attach_face(ch, layers, face)
         self.characters.append(ch)
         return ch
+
+    def _attach_face(self, ch: Character, layers: dict, face: str | dict) -> None:
+        """Mount a face's attachments on the character's slot bone.
+
+        One layer per attachment, parented to the slot's bone so it rides the
+        head for free. The layer's rotation compensates the bone's rest-pose
+        world angle, so face art is authored screen-aligned (x = facing
+        direction, y = down) and reads correctly on an upright human head and a
+        tilted dog head alike. Visibility is a radio button flipped by keying
+        opacity with hold steps — see set_expression.
+        """
+        from glaxnimate import utils
+
+        from ..cartoon.rig import Pose
+        from . import props as P
+
+        data = assets.load_face(face) if isinstance(face, str) else assets.face_validate(face)
+        slot_name = data["slot"]
+        slot = ch.body.slots.get(slot_name)
+        if slot is None:
+            raise ValueError(
+                f"body has no slot {slot_name!r}; its slots are {sorted(ch.body.slots)}"
+            )
+        bone = slot["bone"]
+        rest = ch.body.rig.solve(Pose())
+
+        for i, (att, shapes) in enumerate(data["attachments"].items()):
+            lay = self.scene.layer(f"{ch.name}.face.{att}")
+            lay.parent = layers[bone]
+            off = slot.get("offset", [0, 0])
+            lay.transform.position.value = utils.Point(off[0], off[1])
+            lay.transform.rotation.value = -rest[bone].angle
+            P.draw_prop(lay, {"shapes": shapes}, x=0.0, ground_y=0.0)
+            lay.opacity.value = 1.0 if i == 0 else 0.0
+            ch.face_layers[att] = lay
+            if i == 0:
+                ch.face_default = att
+
+    def _set_expression(self, character, attachment: str, frame: float) -> str:
+        """Swap the visible face attachment at `frame` (a hold key — no crossfade).
+
+        Radio-button semantics by construction: every attachment layer is keyed
+        at the frame, exactly one at full opacity. The linter's one-visible-per-
+        slot rule can therefore only be violated by hand-editing the file.
+        """
+        from glaxnimate import model
+
+        ch = character if isinstance(character, Character) else next(
+            (c for c in self.characters if c.name == character), None
+        )
+        if ch is None:
+            raise ValueError(
+                f"no character {character!r}; have {[c.name for c in self.characters]}"
+            )
+        if not ch.face_layers:
+            raise ValueError(
+                f"{ch.name} has no face - pass face=... to add_character first"
+            )
+        if attachment not in ch.face_layers:
+            raise ValueError(
+                f"no attachment {attachment!r}; this face has {sorted(ch.face_layers)}"
+            )
+
+        def key(lay, f, v):
+            lay.opacity.set_keyframe(float(f), v)
+            tr = model.KeyframeTransition()
+            tr.hold = True
+            lay.opacity.set_transition(float(f), tr)
+
+        if not ch._face_keyed:
+            # Backfill frame 0 first: a property's value before its first keyframe
+            # is that keyframe's value, so keying only at `frame` would silently
+            # change what was visible from the start.
+            for att, lay in ch.face_layers.items():
+                key(lay, 0.0, 1.0 if att == ch.face_default else 0.0)
+            ch._face_keyed = True
+
+        for att, lay in ch.face_layers.items():
+            key(lay, frame, 1.0 if att == attachment else 0.0)
+        ch.expressions.append((float(frame), attachment))
+        return f"{ch.name} shows {attachment!r} from frame {frame:g}"
 
     def _add_action(
         self,
@@ -229,6 +321,8 @@ class Session:
             "register_gait": assets.register_gait,
             "load_prop": assets.load_prop,
             "add_prop": self._add_prop,
+            "load_face": assets.load_face,
+            "set_expression": self._set_expression,
             # the stage
             "add_character": self._add_character,
             "add_object": self._add_object,
