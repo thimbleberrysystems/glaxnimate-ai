@@ -27,7 +27,7 @@ from typing import Any
 
 from glaxnimate import environment
 
-from ..cartoon import geometry, motion, presets, principles, rig
+from ..cartoon import actions, geometry, motion, presets, principles, rig
 from ..cartoon.gait import Gait, pose_at
 from ..cartoon.presets import Body
 from .bake import Scene, bake_rig, bake_samples
@@ -41,7 +41,7 @@ class Character:
 
     name: str
     body: Body
-    gait: Gait
+    gait: Gait | None
     pose_fn: Any
 
 
@@ -121,6 +121,27 @@ class Session:
         self.characters.append(ch)
         return ch
 
+    def _add_action(
+        self,
+        body: Body,
+        pose_fn,
+        *,
+        name: str = "character",
+        color: str | None = None,
+        thickness: float | None = None,
+    ) -> Character:
+        """Bake a character driven by an arbitrary pose function (a jump, a wave).
+
+        Actions aren't locomotion, so there is no gait — but the character is still
+        registered so the linter and diagnostics can inspect it (contact slip,
+        joint integrity, bounds all still apply).
+        """
+        bake_rig(self.scene, body, pose_fn, frames=self.frames,
+                 color=color, thickness=thickness, layer_name=name)
+        ch = Character(name, body, None, pose_fn)
+        self.characters.append(ch)
+        return ch
+
     def _add_object(self, samples, **kw):
         return bake_samples(self.scene, samples, **kw)
 
@@ -168,6 +189,7 @@ class Session:
             # the cartoon library
             "presets": presets,
             "motion": motion,
+            "actions": actions,
             "principles": principles,
             "geometry": geometry,
             "rig": rig,
@@ -177,10 +199,12 @@ class Session:
             "quadruped": presets.quadruped,
             "make_gait": presets.make_gait,
             "pace": presets.pace,
+            "pose_at": pose_at,  # build a base pose_fn to wrap with actions.trail
             # the stage
             "add_character": self._add_character,
             "add_object": self._add_object,
             "add_chaser": self._add_chaser,
+            "add_action": self._add_action,
             "scene": self.scene,
             "ground": self.ground_y,
             "frames": self.frames,

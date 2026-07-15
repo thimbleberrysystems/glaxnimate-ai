@@ -299,6 +299,18 @@ STAGE
      metric catches that, because each character is individually fine; it is the
      relationship that is wrong.
 
+ACTIONS (things a character DOES; not locomotion). Each returns a pose function
+you hand to add_action(body, pose_fn, name="..."):
+  actions.jump(body, ground_y=, x=, height=, distance=0, frames=36)
+     anticipation (crouch) -> launch -> arc -> squash landing. Three principles.
+  actions.idle(body, ground_y=, x=, cycle_frames=48)   # breathing; a living hold
+  actions.wave(body, ground_y=, x=, frames=48)          # raise arm and wave
+  actions.trail(pose_fn, body, chain=[joints], lag=2.5, swing=26)
+     FOLLOW-THROUGH: wrap any pose_fn so a loose chain (tail, cape, ear, hair)
+     lags behind the motion and settles when the body stops. chain is ordered
+     base->tip. Silent when the character is still, whips when it darts.
+  actions.sequence((action1, frames1), (action2, frames2), ...)  # beats in a row
+
 MOTION (things without legs; no rig needed)
   motion.bounce(x0=, x1=, ground_y=, apex=, frames=, bounces=5, restitution=.62, radius=40)
   motion.roll(x0=, x1=, y=, radius=, frames=)      # wheel: spin locked to travel
