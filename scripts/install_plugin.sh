@@ -40,11 +40,16 @@ say "1/2  Qt bindings"
 # Do NOT substitute `pip install PySide6`: it bundles its own copy of Qt6, and two
 # Qts in one address space is undefined behaviour — it will crash, eventually, in a
 # way that looks like anything but the real cause.
+# QtNetwork ships inside the base python3-pyqt6 — there is no separate
+# python3-pyqt6.qtnetwork package, despite the naming of every *other* module
+# (qtcharts, qtmultimedia, qtsvg ... are all split out; the core four are not).
 if python3 -c "import PyQt6.QtNetwork" 2>/dev/null; then
     ok "python3-pyqt6 already present"
 else
-    sudo apt-get install -y python3-pyqt6 python3-pyqt6.qtnetwork
-    ok "installed python3-pyqt6"
+    sudo apt-get install -y python3-pyqt6
+    python3 -c "import PyQt6.QtNetwork" 2>/dev/null \
+        || die "python3-pyqt6 installed but PyQt6.QtNetwork will not import"
+    ok "installed python3-pyqt6 (includes QtNetwork)"
 fi
 
 say "2/2  Plugin"

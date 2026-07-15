@@ -37,7 +37,7 @@ try:
 except ImportError as e:  # pragma: no cover - only ever hit inside the GUI
     raise ImportError(
         "The AI Bridge needs PyQt6 bound to the *system* Qt:\n"
-        "    sudo apt install python3-pyqt6 python3-pyqt6.qtnetwork\n"
+        "    sudo apt install python3-pyqt6\n"
         "Do NOT `pip install PySide6` — it bundles a second Qt into this process."
     ) from e
 
