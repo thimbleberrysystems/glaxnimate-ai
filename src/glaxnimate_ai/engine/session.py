@@ -154,7 +154,8 @@ class Session:
         ch = Character(name, body, gait, pose_fn, limb_pairs=limb_pairs)
 
         if face_data is None and face is not None:
-            face_data = assets.load_face(face) if isinstance(face, str)                 else assets.face_validate(face)
+            face_data = (assets.load_face(face) if isinstance(face, str)
+                         else assets.face_validate(face))
         if face_data is not None:
             self._attach_face(ch, layers, face_data)
         self.characters.append(ch)
