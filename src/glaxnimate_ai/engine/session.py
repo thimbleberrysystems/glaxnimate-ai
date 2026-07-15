@@ -88,6 +88,7 @@ class Session:
         ground_y: float | None = None,
     ) -> Session:
         scene = Scene.create(width, height, frames=frames, fps=fps)
+        _pinned_scenes.append(scene)  # see note on _pinned_scenes above
         return cls(doc_id, scene, ground_y if ground_y is not None else height * 0.87, frames)
 
     # ------------------------------------------------------ the script's API
@@ -252,16 +253,35 @@ class Session:
             signal.signal(signal.SIGALRM, old)
 
 
-class SessionStore:
-    """Every document in play, plus the one global Glaxnimate environment.
+# The one Glaxnimate environment for the whole process. This must be a process
+# singleton, not per-store: entering Headless() tears down and re-creates Qt's
+# application object, and any still-alive document from an earlier context — in
+# particular one with parented layers, which hold QObject connections between
+# them — dangles and segfaults on the next touch. Found the hard way: three
+# SessionStores in one pytest run crashed the interpreter.
+_env_stack: ExitStack | None = None
 
-    `Headless()` is entered **once** for the life of the process. It brings up a
-    Qt application object; doing that per call would be slow and, worse, unstable.
-    """
+# Documents are pinned for the life of the process. Layer parenting creates
+# QObject connections *between* layers, and letting Python's GC destroy a
+# document at an arbitrary moment — possibly while another document is pushing
+# onto its undo stack — segfaults inside Qt (observed in QUndoStack::push).
+# Qt object lifetime is not something to outsmart from Python; a scene is a few
+# MB and sessions per process are few, so we simply never free them.
+_pinned_scenes: list = []
+
+
+def _shared_environment() -> None:
+    global _env_stack
+    if _env_stack is None:
+        _env_stack = ExitStack()
+        _env_stack.enter_context(environment.Headless())
+
+
+class SessionStore:
+    """Every document in play, sharing the process-wide Glaxnimate environment."""
 
     def __init__(self) -> None:
-        self._stack = ExitStack()
-        self._stack.enter_context(environment.Headless())
+        _shared_environment()
         self._sessions: dict[str, Session] = {}
         self._n = 0
 
@@ -280,4 +300,6 @@ class SessionStore:
             raise KeyError(f"no document {doc_id!r} (open: {known})") from None
 
     def close(self) -> None:
-        self._stack.close()
+        """Kept for API compatibility. The Qt environment is process-wide and
+        deliberately never torn down: Qt shutdown with live documents is exactly
+        the crash this design removes."""

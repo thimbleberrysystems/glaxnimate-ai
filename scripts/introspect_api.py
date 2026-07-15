@@ -55,7 +55,13 @@ def main() -> None:
     w("- On an IO format, `fmt.name` is a **property** but `fmt.extensions()` is a "
       "**method**. Mixing them up is a `TypeError`.")
     w("- Rendering at exactly `last_frame` yields an empty image (the range is "
-      "exclusive at the end).\n")
+      "exclusive at the end).")
+    w("- **`set_transition` on a scale property segfaults** (upstream binding bug; "
+      "position and rotation transitions are fine). Write scale keys linear-timed "
+      "and let the reducer add keys instead — see `engine/bake.py`.")
+    w("- Entering `environment.Headless()` more than once per process is unstable: "
+      "documents from an earlier context dangle. Use one process-wide environment "
+      "(`engine/session.py`).\n")
 
     w("## Minimal working example\n")
     w("```python")

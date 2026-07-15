@@ -1,16 +1,25 @@
-"""Turn poses into a Glaxnimate document.
+"""Turn animation into a Glaxnimate document — as a rig, not a bake.
 
-The pose engine (`cartoon/`) is pure Python and knows nothing about Glaxnimate.
-This module is the only place the two meet: it samples a pose per frame and
-writes keyframes. Keeping the seam this thin is deliberate — it means the rig
-maths, the gaits and the linter are all testable with no Qt in the room, and
-swapping the renderer later would touch one file.
+v1 wrote every bone's *world* transform on every frame: 2,332 keyframes for one
+walking man, uneditable output, all easing flattened to per-frame linear. v2
+writes what an animator would have built by hand:
 
-A bone is drawn as a rounded rect in a Group whose transform carries the joint's
-world position and angle. The rect is offset by half its length so the group's
-origin sits on the joint, which makes rotation happen about the joint rather
-than about the middle of the bone — the difference between an elbow and a
-propeller.
+* **One layer per bone, parented** (`Layer.parent`) to its parent bone's layer —
+  transform inheritance does the forward kinematics, so a bone's local position
+  is *static* (its attachment offset) and only its **local rotation** animates.
+  Draw order comes from layer stacking (last-added on top), independent of the
+  parent hierarchy — the same split Spine uses, and the reason a far arm can be
+  parented to the spine yet still paint behind it.
+* **Sparse keys with real easing** (`engine/reduce.py`): keys seeded at the
+  channel's extrema (the poses), refined until reconstruction error is inside
+  tolerance, bezier timing fitted per segment and written through
+  `KeyframeTransition`.
+
+The result opens in the GUI as an actual puppet: rotate a thigh and the leg
+follows; drag one of a handful of keys and the motion retimes.
+
+The pose engine stays pure Python; this module remains the only place poses meet
+Glaxnimate.
 """
 
 from __future__ import annotations
@@ -23,8 +32,22 @@ from glaxnimate import model, utils
 from ..cartoon.geometry import Vec2
 from ..cartoon.presets import Body, Part
 from ..cartoon.rig import Pose
+from .reduce import PointKey, ScalarKey, reduce_point, reduce_scalar
 
 __all__ = ["Scene", "bake_rig", "bake_samples"]
+
+#: Reduction tolerances. Position error under a pixel and angle error under a
+#: degree are both below what the linter allows and what an eye can see at 1x.
+TOL_PX = 0.75
+TOL_DEG = 0.75
+#: Contact chains (a foot and the leg above it) get a tighter angular tolerance.
+#: Interpolation wiggle composes down the chain into horizontal drift of planted
+#: feet; 0.3 deg holds the residual slip in the *baked* output under 0.8px/frame
+#: (measured), which is invisible under anti-aliasing. The IR itself — what the
+#: linter certifies — remains exactly zero-slip; this bound is purely about how
+#: faithfully sparse keys replay it.
+TOL_DEG_LEG = 0.3
+TOL_SCALE = 0.01
 
 
 @dataclass(slots=True)
@@ -61,17 +84,62 @@ class Scene:
         return lay
 
 
-def _bone_group(parent, length: float, part: Part) -> model.shapes.Group:
-    """Draw one skinned bone, anchored at the joint and running along local +x.
+# ----------------------------------------------------------- channel writers
+_LINEAR = (1.0 / 3.0, 2.0 / 3.0)
 
-    A capsule plus a disc at the joint. The disc is what makes an elbow look like
-    an elbow: without it, two rounded rects meeting at an angle leave a visible
-    notch on the outside of every bend.
 
-    If the part declares a `head`, it is an ellipse at the bone's tip instead —
-    a head is not a rod.
+def _write_scalar(prop, keys: list[ScalarKey], *, transitions: bool = True) -> int:
+    """Write a reduced scalar channel; returns how many keys it cost.
+
+    `transitions=False` writes plain linear keys. It exists because
+    **`set_transition` on a scale property segfaults** in the bindings (an
+    upstream bug — position and rotation are fine); scale channels ship linear
+    keys and the reducer compensates with a few extra of them.
     """
-    g = parent.add_shape("Group")
+    if len(keys) <= 1:
+        prop.value = keys[0].value if keys else 0.0
+        return 0
+    for k in keys:
+        prop.set_keyframe(float(k.frame), k.value)
+    if transitions:
+        for k in keys[:-1]:
+            if (k.cy1, k.cy2) == _LINEAR:
+                continue  # identity timing: the default, nothing to write
+            tr = model.KeyframeTransition()
+            tr.before = utils.Point(1.0 / 3.0, k.cy1)
+            tr.after = utils.Point(2.0 / 3.0, k.cy2)
+            prop.set_transition(float(k.frame), tr)
+    return len(keys)
+
+
+def _write_point(prop, keys: list[PointKey], *, transitions: bool = True) -> int:
+    if len(keys) <= 1:
+        v = keys[0].value if keys else Vec2()
+        prop.value = utils.Point(v.x, v.y)
+        return 0
+    for k in keys:
+        prop.set_keyframe(float(k.frame), utils.Point(k.value.x, k.value.y))
+    if transitions:
+        for k in keys[:-1]:
+            if (k.cy1, k.cy2) == _LINEAR:
+                continue
+            tr = model.KeyframeTransition()
+            tr.before = utils.Point(1.0 / 3.0, k.cy1)
+            tr.after = utils.Point(2.0 / 3.0, k.cy2)
+            prop.set_transition(float(k.frame), tr)
+    return len(keys)
+
+
+# ----------------------------------------------------------------- skinning
+def _draw_part(layer, length: float, part: Part, *, marker: float = 0.0) -> None:
+    """Draw one bone's skin into its layer, in local space (origin = the joint).
+
+    A capsule plus a disc at the joint — the disc is what stops two capsules
+    meeting at an angle from leaving a notch on the outside of every bend. A
+    `head` part is an ellipse at the tip instead; a `tip` is a hand/paw dot.
+    Everything here is static: the layer's transform does all the moving.
+    """
+    g = layer.add_shape("Group")
     g.add_shape("Fill").color.value = part.color
 
     if part.head:
@@ -79,26 +147,29 @@ def _bone_group(parent, length: float, part: Part) -> model.shapes.Group:
         e = g.add_shape("Ellipse")
         e.size.value = utils.Size(hw, hh)
         e.position.value = utils.Point(length, 0.0)
-        return g
+        return
 
     w = part.width
     r = g.add_shape("Rect")
     r.size.value = utils.Size(max(length, 1.0), w)
-    # Offset by half the length so the group's origin is the joint, not the bone's
-    # centre — otherwise rotation swings the bone like a propeller.
     r.position.value = utils.Point(length / 2.0, 0.0)
     r.rounded.value = w / 2.0
 
-    joint_cap = g.add_shape("Ellipse")
-    joint_cap.size.value = utils.Size(w, w)
-    joint_cap.position.value = utils.Point(0.0, 0.0)
+    cap = g.add_shape("Ellipse")
+    cap.size.value = utils.Size(w, w)
+    cap.position.value = utils.Point(0.0, 0.0)
 
-    if part.tip > 0:  # a hand, a paw, a nose
+    if part.tip > 0:
         t = g.add_shape("Ellipse")
         t.size.value = utils.Size(part.tip * 2, part.tip * 2)
         t.position.value = utils.Point(length, 0.0)
 
-    return g
+    if marker > 0:  # contact marker rides the bone tip — static, zero keys
+        mg = layer.add_shape("Group")
+        mg.add_shape("Fill").color.value = "#e8543f"
+        e = mg.add_shape("Ellipse")
+        e.size.value = utils.Size(marker * 2, marker * 2)
+        e.position.value = utils.Point(length, 0.0)
 
 
 def bake_rig(
@@ -112,49 +183,89 @@ def bake_rig(
     joint_color: str | None = "#e8543f",
     joint_radius: float = 0.0,
     layer_name: str = "character",
+    stats: dict | None = None,
 ) -> model.shapes.Layer:
-    """Sample `pose_fn` once per frame and keyframe every bone.
+    """Build a parented bone-layer rig and key it sparsely.
 
-    Bones are skinned from `body.parts`. `color`/`thickness` override the skin
-    entirely, which is what you want for a silhouette or a debug pass.
+    Sampling happens once; every local channel (root path, per-bone local
+    rotation) is reduced independently. Local channels are the whole trick: in
+    world space every bone moves every frame because the body does, but in
+    parent space a walking skeleton is nearly periodic rotations over *static*
+    offsets — which is what makes ~10 keys describe what took ~200.
     """
-    lay = scene.layer(layer_name)
-    groups: dict[str, model.shapes.Group] = {}
+    rig = body.rig
 
+    # ---- sample local channels (no Qt in this part)
+    root_pos: list[Vec2] = []
+    root_rot: list[float] = []
+    local_rot: dict[str, list[float]] = {name: [] for name in rig.joints}
+    for f in range(frames + 1):
+        pose = pose_fn(float(f))
+        root_pos.append(pose.root)
+        j_root = rig.joints[rig.root_name]
+        root_rot.append(pose.root_angle + pose.angles.get(rig.root_name, 0.0) + j_root.rest_angle)
+        for name, j in rig.joints.items():
+            if name != rig.root_name:
+                local_rot[name].append(pose.angles.get(name, 0.0) + j.rest_angle)
+
+    # ---- create layers in painter's order (last-added paints on top)
+    root_layer = scene.layer(layer_name)
+    layer_of: dict[str, model.shapes.Layer] = {rig.root_name: root_layer}
+
+    skinless = [n for n in rig.joints
+                if n != rig.root_name and n not in body.bones]
+    for name in (*skinless, *body.bones):
+        if name == rig.root_name:
+            continue
+        lay = scene.layer(f"{layer_name}.{name}")
+        layer_of[name] = lay
+
+    # ---- parent the hierarchy (order-independent; draw order stays stacking)
+    for name, lay in layer_of.items():
+        parent = rig.joints[name].parent
+        if parent is not None:
+            lay.parent = layer_of[parent]
+
+    # ---- skins (static, local space)
     for name in body.bones:
-        joint = body.rig.joints[name]
+        j = rig.joints[name]
         part = body.parts.get(name, Part())
         if color is not None or thickness is not None:
             part = Part(
                 width=thickness if thickness is not None else part.width,
                 color=color if color is not None else part.color,
-                head=part.head,
-                tip=part.tip,
+                head=part.head, tip=part.tip,
             )
-        groups[name] = _bone_group(lay, joint.length, part)
-        groups[name].name = name
+        marker = joint_radius if (joint_color and joint_radius > 0
+                                  and (j.contact or j.rolling)) else 0.0
+        _draw_part(layer_of[name], j.length, part, marker=marker)
 
-    if joint_color and joint_radius > 0:
-        for name in body.rig.contacts:
-            g = lay.add_shape("Group")
-            g.name = f"{name}__contact"
-            g.add_shape("Fill").color.value = joint_color
-            e = g.add_shape("Ellipse")
-            e.size.value = utils.Size(joint_radius * 2, joint_radius * 2)
-            groups[f"{name}__contact"] = g
+    # ---- keys
+    n_keys = 0
+    n_keys += _write_point(root_layer.transform.position, reduce_point(root_pos, tol=TOL_PX))
+    n_keys += _write_scalar(root_layer.transform.rotation, reduce_scalar(root_rot, tol=TOL_DEG))
 
-    for f in range(frames + 1):
-        world = body.rig.solve(pose_fn(float(f)))
-        for name, g in groups.items():
-            if name.endswith("__contact"):
-                jf = world[name.removesuffix("__contact")]
-                g.transform.position.set_keyframe(f, utils.Point(jf.tip.x, jf.tip.y))
-            else:
-                jf = world[name]
-                g.transform.position.set_keyframe(f, utils.Point(jf.origin.x, jf.origin.y))
-                g.transform.rotation.set_keyframe(f, jf.angle)
+    # A contact chain is the contact joint and everything above it to the root —
+    # the bones whose angles decide where a planted foot actually lands.
+    contact_chain: set[str] = set()
+    for name, j in rig.joints.items():
+        if j.contact or j.rolling:
+            contact_chain.update(rig.chain(name))
 
-    return lay
+    for name, lay in layer_of.items():
+        if name == rig.root_name:
+            continue
+        j = rig.joints[name]
+        off = j.offset if j.offset is not None else Vec2(rig.joints[j.parent].length, 0.0)
+        lay.transform.position.value = utils.Point(off.x, off.y)  # static: the whole point
+        tol = TOL_DEG_LEG if name in contact_chain else TOL_DEG
+        n_keys += _write_scalar(lay.transform.rotation, reduce_scalar(local_rot[name], tol=tol))
+
+    if stats is not None:
+        stats["keyframes"] = n_keys
+        stats["layers"] = len(layer_of)
+
+    return root_layer
 
 
 def bake_samples(
@@ -165,11 +276,10 @@ def bake_samples(
     size: Vec2 | None = None,
     color: str = "#e8543f",
     layer_name: str = "object",
+    stats: dict | None = None,
 ) -> model.shapes.Layer:
-    """Keyframe a list of `motion.Sample` (position, scale, rotation) onto one shape.
-
-    This is the non-character path: balls, wheels, leaves, logos.
-    """
+    """Bake a `motion.Sample` list (ball, wheel, leaf) with reduced keys."""
+    samples = list(samples)
     size = size or Vec2(80.0, 80.0)
     lay = scene.layer(layer_name)
     g = lay.add_shape("Group")
@@ -177,9 +287,19 @@ def bake_samples(
     s = g.add_shape(shape)
     s.size.value = utils.Size(size.x, size.y)
 
-    for smp in samples:
-        g.transform.position.set_keyframe(smp.frame, utils.Point(smp.pos.x, smp.pos.y))
-        g.transform.rotation.set_keyframe(smp.frame, smp.angle)
-        g.transform.scale.set_keyframe(smp.frame, utils.Point(smp.scale.x, smp.scale.y))
+    pos = [smp.pos for smp in samples]
+    rot = [smp.angle for smp in samples]
+    scl = [smp.scale for smp in samples]
+
+    n = _write_point(g.transform.position, reduce_point(pos, tol=TOL_PX))
+    n += _write_scalar(g.transform.rotation, reduce_scalar(rot, tol=TOL_DEG))
+    # scale: linear keys only — set_transition on a scale property segfaults
+    # in the bindings. The ease=False reducer adds keys until linear segments
+    # are within tolerance instead.
+    n += _write_point(g.transform.scale,
+                      reduce_point(scl, tol=TOL_SCALE, ease=False),
+                      transitions=False)
+    if stats is not None:
+        stats["keyframes"] = n
 
     return lay
