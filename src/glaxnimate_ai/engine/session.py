@@ -27,7 +27,7 @@ from typing import Any
 
 from glaxnimate import environment
 
-from ..cartoon import actions, geometry, motion, presets, principles, rig
+from ..cartoon import actions, assets, geometry, motion, presets, principles, rig
 from ..cartoon.gait import Gait, pose_at
 from ..cartoon.presets import Body
 from .bake import Scene, bake_rig, bake_samples
@@ -145,6 +145,16 @@ class Session:
         self.characters.append(ch)
         return ch
 
+    def _add_prop(self, prop, *, x: float = 0.0, scale: float = 1.0,
+                  layer_name: str = "props"):
+        """Place a data prop (a dict or an asset name) on the ground line."""
+        from . import props as P
+
+        data = assets.load_prop(prop) if isinstance(prop, str) else assets.prop_validate(prop)
+        lay = self.scene.layer(layer_name)
+        P.draw_prop(lay, data, x=x, ground_y=self.ground_y, scale=scale)
+        return lay
+
     def _add_object(self, samples, **kw):
         # Register the samples so the critic can see the object too — in v1 only
         # rig characters were checkable and a ball through the floor was invisible.
@@ -210,6 +220,15 @@ class Session:
             "make_gait": presets.make_gait,
             "pace": presets.pace,
             "pose_at": pose_at,  # build a base pose_fn to wrap with actions.trail
+            # the asset library: the vocabulary that grows without code changes
+            "assets": assets,
+            "load_body": assets.load_body,
+            "save_body": assets.save_body,
+            "body_from_data": assets.body_from_data,
+            "load_gait": assets.load_gait,
+            "register_gait": assets.register_gait,
+            "load_prop": assets.load_prop,
+            "add_prop": self._add_prop,
             # the stage
             "add_character": self._add_character,
             "add_object": self._add_object,

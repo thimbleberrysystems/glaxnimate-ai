@@ -145,6 +145,60 @@ def diagnose_animation(doc_id: str, track: str | None = None) -> str:
     return "\n".join(out)
 
 
+# ------------------------------------------------------------------- assets
+@mcp.tool()
+def save_asset(kind: str, name: str, data: str) -> str:
+    """Save a new asset (body/gait/prop) to the library as JSON. THE growth path.
+
+    This is how you add a creature, gait or prop that does not exist yet: author
+    the JSON, save it, then use it by name in run_script (`load_body("bird")`,
+    `make_gait(body, "scuttle")`, `add_prop("bench")`). Assets are validated
+    before saving — a body with a joint cycle, a gait whose legs cannot reach, or
+    a malformed prop is rejected with an error that says what to fix.
+
+    Schemas: body = {version:1, kind:"body", joints:[{name,parent,length,
+    rest_angle,offset,contact,mass}], limbs:[{upper,lower,bend_positive}],
+    swings:[...], bones:[draw order], parts:{joint:{width,color,head,tip}}}.
+    gait = {version:1, kind:"gait", name, phases:{"2":[0,.5]}, duty, stride,
+    lift, bob, lean, crouch} (ratios of hip height). prop = {version:1,
+    kind:"prop", shapes:[{type:rect|ellipse|polygon, ...}]} with origin at the
+    ground anchor, negative y up. Look at an existing asset first: load_asset.
+    """
+    import json as _json
+
+    from ..cartoon import assets as A
+
+    try:
+        path = A.save_asset(kind, name, _json.loads(data))
+    except (ValueError, KeyError) as e:
+        return f"rejected: {e}"
+    return f"saved {path.name} - use it by name in run_script"
+
+
+@mcp.tool()
+def list_assets() -> str:
+    """Everything in the asset library, by kind."""
+    from ..cartoon import assets as A
+
+    listing = A.list_assets()
+    if not listing:
+        return "the asset library is empty"
+    return "\n".join(f"{kind}: {', '.join(names)}" for kind, names in listing.items())
+
+
+@mcp.tool()
+def load_asset(kind: str, name: str) -> str:
+    """Read an asset's JSON — the fastest way to learn a schema is a real example."""
+    import json as _json
+
+    from ..cartoon import assets as A
+
+    try:
+        return _json.dumps(A.load_asset(kind, name), indent=1)
+    except (FileNotFoundError, ValueError) as e:
+        return str(e)
+
+
 # ------------------------------------------------------------ vision (last resort)
 @mcp.tool()
 def render_contact_sheet(doc_id: str, count: int = 8, cols: int = 4) -> MCPImage:
@@ -277,6 +331,15 @@ BODIES (rigs). A human is one preset among many; the engine animates anything.
   human() / biped(thigh=, shin=, spine=, arm=, forearm=, head=)  -> Body
   quadruped(upper=, lower=, body=, neck=, head=, tail=)          -> Body  (dog/cat/horse)
   body.hip_height, body.leg_length
+
+THE ASSET LIBRARY (data, not code -- this is how the vocabulary GROWS):
+  load_body("bird") -> Body            a creature saved as JSON
+  save_body(body, "name")              persist one (validated first)
+  body_from_data({...}) -> Body        build straight from a dict
+  load_gait("scuttle") / register_gait({...})   custom gaits by name
+  add_prop("bench", x=200) / load_prop(name)    data props on the ground line
+  New creature? Author body JSON (see save_asset tool for the schema), save it,
+  load it by name. It gets the same linter and reach guard as the builtins.
 
 GAITS. A gait is a phase table: N limbs offset around one cycle. Same code for
 every creature.

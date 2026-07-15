@@ -21,7 +21,8 @@ from glaxnimate import model, utils
 
 from .bake import Scene
 
-__all__ = ["sky", "ground", "house", "school", "tree", "cloud", "sun", "parallax"]
+__all__ = ["sky", "ground", "house", "school", "tree", "cloud", "sun", "parallax",
+           "draw_prop"]
 
 
 def _group(parent, color: str, name: str = "") -> model.shapes.Group:
@@ -122,6 +123,31 @@ def cloud(layer, x: float, y: float, *, w: float = 90.0, color: str = "#ffffff")
 
 def sun(layer, x: float, y: float, *, r: float = 46.0, color: str = "#ffd76e"):
     _ellipse(layer, x, y, r * 2, r * 2, color)
+
+
+def draw_prop(layer, data: dict, *, x: float = 0.0, ground_y: float = 0.0,
+              scale: float = 1.0) -> None:
+    """Interpret a declarative prop document (see `cartoon/assets.py`).
+
+    Shapes are in local coordinates with the origin at the prop's *ground anchor*:
+    y = 0 is where it touches the ground and negative y goes up (screen coords).
+    This is the path by which an LLM-authored prop — a JSON file, not code —
+    reaches the canvas. The template functions above remain for parametric
+    scenery; this exists so the vocabulary can grow without them.
+    """
+    for sh in data["shapes"]:
+        color = sh.get("color", "#888888")
+        t = sh["type"]
+        if t == "rect":
+            _rect(layer, x + sh["x"] * scale, ground_y + sh["y"] * scale,
+                  sh["w"] * scale, sh["h"] * scale, color,
+                  round_=sh.get("round", 0.0) * scale)
+        elif t == "ellipse":
+            _ellipse(layer, x + sh["cx"] * scale, ground_y + sh["cy"] * scale,
+                     sh["w"] * scale, sh["h"] * scale, color)
+        elif t == "polygon":
+            pts = [(x + px * scale, ground_y + py * scale) for px, py in sh["points"]]
+            _poly(layer, pts, color)
 
 
 def parallax(layer, *, distance: float, frames: int, camera_speed: float) -> None:
