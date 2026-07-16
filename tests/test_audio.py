@@ -321,3 +321,25 @@ def test_missing_voice_model_error_contains_the_fix(tmp_path, monkeypatch):
 
     with pytest.raises(FileNotFoundError, match="download_voices"):
         synthesize("hello", "en_US-lessac-medium")
+
+
+def test_missing_piper_package_teaches_before_the_download(tmp_path, monkeypatch):
+    """The command that downloads a voice ships INSIDE piper, so a user without
+    the package must be told to install it first — not sent to a download
+    command they cannot run."""
+    import builtins
+
+    monkeypatch.setenv("GLAXNIMATE_AI_ASSETS", str(tmp_path))
+    monkeypatch.delenv("GLAXNIMATE_AI_TTS_STUB", raising=False)
+    real_import = builtins.__import__
+
+    def no_piper(name, *a, **kw):
+        if name == "piper" or name.startswith("piper."):
+            raise ImportError("no module named piper")
+        return real_import(name, *a, **kw)
+
+    monkeypatch.setattr(builtins, "__import__", no_piper)
+    from glaxnimate_ai.audio.voice import synthesize
+
+    with pytest.raises(ImportError, match=r"\[tts\]"):
+        synthesize("hello")

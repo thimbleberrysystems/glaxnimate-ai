@@ -3,9 +3,10 @@
 **An MCP server that lets an LLM author real 2D cartoon animation.**
 
 You say *"a man walks home from school"* and a language model produces an actual
-animated scene — a walk cycle, a scrolling background, exported to Lottie, GIF or
-MP4. Not a storyboard, not a prompt for a video model. A vector animation you can
-open and edit in [Glaxnimate](https://glaxnimate.mattbas.org/).
+animated scene — a walk cycle, a scrolling background, footsteps that land on the
+right frames, and a line of dialogue — exported to Lottie, GIF or MP4 **with a
+soundtrack**. Not a storyboard, not a prompt for a video model. A vector animation
+you can open and edit in [Glaxnimate](https://glaxnimate.mattbas.org/).
 
 ![a man walking home from school](docs/walk_home.png)
 
@@ -30,6 +31,11 @@ free linter, numeric diagnostics, rendered images, and finally you. Images cost
 ~1,400 tokens each and only answer what numbers can't, so they're a last resort,
 not the workhorse.
 
+Both constraints generalise. The model can't hear either — so sound gets the same
+treatment: SFX are JSON synth patches it *parameterises* rather than records, cue
+placement is **derived from the animation's own physics**, and the first tier of
+audio feedback is a numeric mix report, not a listen. See [Audio](#audio).
+
 The MCP server is the smallest part of the codebase. The rig library and the
 critic stack are the product.
 
@@ -45,21 +51,23 @@ not scale. v2 restructures around the same idea Spine uses:
 ASSETS (JSON, validated, LLM-authorable)       SCENE (JSON, persisted per doc)
   *.body.json   joints/limbs/skins/slots         scenery · props · characters
   *.gait.json   phase tables + ratios            (sampled poses) · objects ·
-  *.prop.json   declarative shapes               expression swaps
-  *.face.json   attachments per slot                     │
+  *.prop.json   declarative shapes               expression swaps · audio
+  *.face.json   attachments per slot             (cues · music seed · dialogue)
+  *.sfx.json    synth patches                            │
         └───────────────┬─────────────────────────────────┘
                         ▼  sample
               TIMELINE IR — plain per-frame world transforms
                         │
-        ┌───────────────┼──────────────────────┐
-        ▼               ▼                      ▼
-     critic        keyframe reducer        renderer
-  (lint + diagnose  (semantic keys +     (frames, sheets,
-   run on data —     bezier fit)          GIF/MP4)
-   balls and props        │
-   included)              ▼
-              sparse, editable output: one layer per bone,
-              parented Spine-style, ~10 keys where v1 wrote ~200
+        ┌───────────────┼──────────────────┬─────────────────┐
+        ▼               ▼                  ▼                 ▼
+     critic        keyframe reducer    renderer         motion events
+  (lint + diagnose  (semantic keys +  (frames, sheets,  (plants · hits ·
+   run on data —     bezier fit)       GIF/MP4)          launches)
+   balls and props        │                                  │
+   included)              ▼                                  ▼
+              sparse, editable output: one layer      foley: cues on the
+              per bone, parented Spine-style,         exact frames, panned
+              ~10 keys where v1 wrote ~200            to where they happen
 ```
 
 What that buys, measured:
@@ -81,6 +89,10 @@ What that buys, measured:
   tilted dog head.
 - **One thread owns Qt.** The MCP event loop stays responsive during renders and
   scripts; every Qt object only ever sees the worker thread.
+- **Sound is on the same document.** Cues, a music seed and dialogue live in the
+  scene JSON; TTS renders cache beside it as WAVs, so a reloaded scene speaks its
+  lines with no synthesizer installed — samples persisted, not the program that
+  made them.
 
 ---
 
@@ -97,7 +109,8 @@ centre.
 | **Non-character motion** | `bounce`, `roll` (no-slip wheel), `spring`, `drift` (falling leaf), `sway` |
 | **Principles** | ease in/out, anticipation, overshoot, squash-and-stretch (area-preserving), arcs |
 | **Scenery** | sky, ground, house, school, tree, cloud, sun, parallax at any depth |
-| **Exports** | Lottie JSON, MP4, WebM, WebP, animated GIF, SVG, PNG spritesheet, `.rawr` |
+| **Sound** | 9 synth SFX patches, foley derived from the motion, seeded chiptune music, neural-TTS dialogue with speech bubbles |
+| **Exports** | Lottie JSON, MP4 · WebM (both with the soundtrack muxed in), WebP, animated GIF, SVG, PNG spritesheet, `.rawr` |
 
 Feet do not slip: legs are solved with inverse kinematics from a fixed foot
 target, so a planted foot is world-stationary *by construction*, and the linter
@@ -132,8 +145,20 @@ ln -sf ~/src/glaxnimate/build/bin/plugin/python/build/lib/glaxnimate.cpython-314
     .venv/lib/python3.14/site-packages/
 
 # 3. Verify
-.venv/bin/python -m pytest -q          # 97 tests
+.venv/bin/python -m pytest -q          # 126 tests, ~10s
 ```
+
+**Dialogue is opt-in.** SFX, music and muxing work out of the box (numpy and PyAV
+are core deps — PyAV bundles its own ffmpeg, so there's no system binary to
+install and nothing that can clash with the Glaxnimate build's libav). TTS pulls
+onnxruntime, so it lives behind an extra:
+
+```sh
+uv pip install --python .venv/bin/python -e '.[tts]'
+.venv/bin/python -m piper.download_voices en_US-lessac-medium --data-dir assets/voices
+```
+
+You need it to *author* a spoken line; a scene replays cached dialogue without it.
 
 `setup.sh` builds the GUI app to `/usr/local/bin/glaxnimate` too, so you can open
 and hand-edit anything the model produces.
@@ -222,9 +247,9 @@ The tools are ordered so the cheap tiers come first, and their descriptions push
 the model down the ladder:
 
 ```
-new_document → run_script → lint_animation → diagnose_animation → (render) → export
-                  build       is it BROKEN?    is it GOOD?          LOOK      deliver
-                              free             ~500 tokens          ~1400 tok
+new_document → run_script → lint_animation → diagnose_animation → (render) → auto_sfx → export
+                  build       is it BROKEN?    is it GOOD?          LOOK    sound_report deliver
+                              free             ~500 tokens        ~1400 tok    free
 ```
 
 A representative script the model writes with `run_script`:
@@ -232,20 +257,26 @@ A representative script the model writes with `run_script`:
 ```python
 man = human()
 walk = make_gait(man, "walk", cycle_frames=24)
-add_character(man, walk, x=90, name="man")
+add_character(man, walk, x=90, name="man", face="human")
 
 ball = motion.bounce(x0=60, x1=880, ground_y=ground,
                      apex=220, frames=frames, bounces=5)
 add_object(ball, color="#e8543f")
+
+auto_sfx()                       # footsteps + boings, from the motion itself
+music(seed=11, bpm=104, gain=0.18)
+say("man", "What a lovely day to walk home!", 20)
 ```
 
 It never draws the man — it picks a body and a gait. Then it runs
 `lint_animation` (free — catches sliding feet, unreachable legs, feet through the
 floor) and `diagnose_animation` (spacing charts, arc quality, balance, silhouette;
 names the exact frame). Only for questions numbers can't answer — *does this read
-as a character? is the composition any good?* — does it render an image. Finally
-`preview_for_human` hands **you** a GIF, because your one sentence of feedback
-("legs too stiff") is the highest-signal input in the whole system.
+as a character? is the composition any good?* — does it render an image.
+`sound_report` checks the mix the same way, as numbers. Finally
+`preview_for_human` hands **you** a GIF (and an MP4 with sound), because your one
+sentence of feedback ("legs too stiff") is the highest-signal input in the whole
+system.
 
 ### The 21 tools
 
@@ -303,11 +334,15 @@ It's a data field in the scene document, not a composition system.
 speech bubble above the speaker for its duration, and **caches the rendered
 audio inside the project directory** — a scene replays its dialogue forever
 without piper installed, the same persist-the-samples rule the document uses
-for poses. Voices are one-command downloads (~60 MB, once):
+for poses. It's the `[tts]` extra plus a one-off voice download (~60 MB):
 
 ```bash
+uv pip install --python .venv/bin/python -e '.[tts]'
 .venv/bin/python -m piper.download_voices en_US-lessac-medium --data-dir assets/voices
 ```
+
+Skip both and everything else still works; `say` then fails with the command you
+need rather than an import traceback.
 
 **The model cannot hear — and the tier ladder already covers that.**
 `sound_report` is tier 0 for audio: the cue sheet, peak dBFS, clipping count
@@ -346,7 +381,7 @@ second Qt into the process.
 ## Development
 
 ```sh
-.venv/bin/python -m pytest -q          # 28 unit tests, ~0.5s (pure Python, no Qt)
+.venv/bin/python -m pytest -q          # 126 tests, ~10s
 .venv/bin/ruff check src tests examples
 
 # end-to-end check of the live bridge (needs system PyQt6 + built module):
@@ -359,14 +394,20 @@ is the only seam between them. That's why the tests and the critic run in half a
 second with no Qt in the room.
 
 Every critic check is tested against faults planted on purpose — a sliding foot, a
-leg on stilts, a NaN, a zigzag arc, a figure bent double. A linter that only ever
-passes protects nothing.
+leg on stilts, a NaN, a zigzag arc, a figure bent double, a deliberately clipped
+mix. A linter that only ever passes protects nothing.
+
+The audio tests run with `GLAXNIMATE_AI_TTS_STUB=1`, which swaps synthesis for
+deterministic beeps: the suite must never depend on a 60 MB voice model, and what
+is under test is caching, mixing and persistence — not piper's acoustics, which
+aren't ours to test.
 
 ```
 src/glaxnimate_ai/
-  cartoon/    rig · gait · motion · principles · presets · geometry   (pure Python)
-  engine/     session · sandbox · bake · props · live
+  cartoon/    rig · gait · motion · principles · presets · geometry · assets  (pure Python)
+  engine/     session · scene_doc · bake · reduce · props · live
   feedback/   lint · diagnose · render
+  audio/      synth · events · mix · music · voice · mux
   mcp/        server
 plugin/AiBridge/    the live GUI plugin
 docs/glaxnimate-api.md   the REAL bindings API (the online docs are a version behind)

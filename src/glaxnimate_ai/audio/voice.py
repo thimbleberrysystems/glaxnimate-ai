@@ -1,7 +1,9 @@
 """Dialogue: local neural TTS via piper, with a stub for model-less environments.
 
-Voices are single ONNX files under `assets/voices/` (one ~60 MB download per
-voice, network needed once):
+piper is an optional extra (`pip install 'glaxnimate-ai[tts]'`) — it pulls
+onnxruntime, and it is needed to *author* a line, not to replay one. Voices are
+single ONNX files under `assets/voices/` (one ~60 MB download per voice, network
+needed once):
 
     .venv/bin/python -m piper.download_voices en_US-lessac-medium --data-dir assets/voices
 
@@ -57,6 +59,19 @@ def synthesize(text: str, voice: str = DEFAULT_VOICE,
     if os.environ.get("GLAXNIMATE_AI_TTS_STUB"):
         return _stub(text, sr)
 
+    # Order matters: check the package before the model, because the command
+    # that fetches the model IS the package. Reporting a missing download to
+    # someone who has no piper sends them in a circle.
+    try:
+        from piper import PiperVoice
+    except ImportError as e:
+        raise ImportError(
+            "dialogue needs piper-tts, which is an optional extra. "
+            "Run: uv pip install --python .venv/bin/python 'glaxnimate-ai[tts]'"
+            " -- then download a voice (the next error tells you how). "
+            "Scenes with already-cached lines replay without it."
+        ) from e
+
     model = voices_dir() / f"{voice}.onnx"
     if not model.exists():
         have = sorted(p.stem for p in voices_dir().glob("*.onnx"))
@@ -67,8 +82,6 @@ def synthesize(text: str, voice: str = DEFAULT_VOICE,
         )
 
     if voice not in _loaded:
-        from piper import PiperVoice
-
         _loaded[voice] = PiperVoice.load(str(model))
     pv = _loaded[voice]
 

@@ -7,6 +7,10 @@ license = { text = "MIT" }
 dependencies = [
     "pillow>=11",
     "mcp[cli]>=1.2",
+    "numpy>=2",      # synthesis, mixing
+    "av>=15",        # muxing audio into MP4/WebM; bundles its own ffmpeg, so it
+                     # needs no system binary and cannot clash with the
+                     # source-built Glaxnimate's libav
 ]
 
 [project.scripts]
@@ -18,6 +22,10 @@ glaxnimate-ai = "glaxnimate_ai.mcp.server:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.6"]
+# Dialogue only. Kept out of the core install because it pulls onnxruntime
+# (~200 MB) and because a scene REPLAYS its dialogue from the cached WAVs
+# without it — piper is needed to author a line, not to render one again.
+tts = ["piper-tts>=1.4"]
 
 [build-system]
 requires = ["hatchling"]
