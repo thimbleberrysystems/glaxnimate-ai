@@ -117,3 +117,44 @@ async def test_the_event_loop_stays_free_during_a_slow_script(tmp_path, monkeypa
 
         assert not results["slow"].isError
         assert "GAITS" in results["poke"].content[0].text
+
+
+async def test_the_soundtrack_over_the_wire(tmp_path, monkeypatch):
+    """auto_sfx -> say -> sound_report -> export mp4, and the file must actually
+    carry an audio stream — the muxer runs inside the export tool, so only the
+    wire path proves the model gets a movie with sound."""
+    monkeypatch.setenv("GLAXNIMATE_AI_PROJECTS", str(tmp_path / "projects"))
+    monkeypatch.setenv("GLAXNIMATE_AI_TTS_STUB", "1")
+    async with await _client() as client:
+        r = await client.call_tool("new_document",
+                                   {"width": 480, "height": 280, "frames": 48})
+        doc = r.content[0].text.split(":")[0]
+
+        r = await client.call_tool("run_script", {"doc_id": doc, "code": (
+            "man = human()\n"
+            "add_character(man, make_gait(man, 'walk', cycle_frames=24),"
+            " x=70, name='man')\n"
+        )})
+        assert not r.isError, r.content[0].text
+
+        r = await client.call_tool("auto_sfx", {"doc_id": doc})
+        assert "plant" in r.content[0].text
+
+        r = await client.call_tool("say", {"doc_id": doc, "character": "man",
+                                           "text": "Test line", "frame": 6})
+        assert "says" in r.content[0].text
+
+        r = await client.call_tool("add_sound",
+                                   {"doc_id": doc, "sfx": "ding", "frame": 40})
+        assert not r.isError
+
+        r = await client.call_tool("sound_report", {"doc_id": doc})
+        txt = r.content[0].text
+        assert "dBFS" in txt and "step" in txt and "ding" in txt
+
+        r = await client.call_tool("export", {"doc_id": doc,
+                                              "filename": str(tmp_path / "s.mp4"),
+                                              "format": "mp4"})
+        assert "with audio" in r.content[0].text, r.content[0].text
+        from glaxnimate_ai.audio.mux import has_audio_stream
+        assert has_audio_stream(tmp_path / "s.mp4")

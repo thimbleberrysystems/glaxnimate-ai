@@ -115,7 +115,8 @@ def run_script(doc_id: str, code: str) -> str:
 
     Available without import: `human`, `biped`, `quadruped`, `make_gait`,
     `add_character`, `add_object`, `motion`, `principles`, `presets`, `Vec2`,
-    plus `ground`, `frames`, `width`, `height`.
+    sound (`auto_sfx`, `add_sound`, `music`, `say`), plus `ground`, `frames`,
+    `width`, `height`.
 
     Call `cartoon_api()` first if you have not seen the library. Example:
 
@@ -203,6 +204,70 @@ def describe_scene(doc_id: str) -> str:
 
     s = store.get(doc_id)
     return SD.describe(s.doc)
+
+
+# -------------------------------------------------------------------- sound
+@mcp.tool()
+@qt_tool
+def auto_sfx(doc_id: str, gain: float = 1.0) -> str:
+    """The foley pass: derive sound cues FROM the motion. Zero guessing.
+
+    The same Timeline data the linter reads yields foot plants, ball-ground
+    hits, jump launches/landings and expression swaps; each becomes a cue on
+    the exact frame, panned to where it happens on screen. Defaults:
+    plant→step, hit→boing, launch→whoosh, land→thud, expression→pop.
+    Run it AFTER the animation lints clean (cues are placed from current
+    motion; re-run it if you change the motion). For overrides, call
+    `auto_sfx({...})` inside run_script.
+    """
+    return store.get(doc_id)._auto_sfx(gain=gain)
+
+
+@mcp.tool()
+@qt_tool
+def add_sound(doc_id: str, sfx: str, frame: float,
+              gain: float = 1.0, pan: float = 0.0) -> str:
+    """Place one sound cue by hand (auto_sfx covers motion-driven sounds).
+
+    `sfx` is a builtin patch (boing, thud, step, pop, whoosh, slide_up,
+    slide_down, splat, ding) or a saved sfx asset name. pan is -1 (left)
+    to 1 (right). New sounds are sfx assets: JSON synth patches saved via
+    save_asset — author a patch, save it, cue it by name.
+    """
+    return store.get(doc_id)._add_sound(sfx, frame, gain=gain, pan=pan)
+
+
+@mcp.tool()
+@qt_tool
+def say(doc_id: str, character: str, text: str, frame: float,
+        voice: str | None = None) -> str:
+    """A character speaks the line, with a speech bubble for the duration.
+
+    Local neural TTS (piper). The rendered audio is cached inside the project,
+    so the scene replays its dialogue forever without re-synthesis. If the
+    voice model is missing, the error contains the exact download command —
+    relay it to the user (one ~60MB download, network needed once).
+    """
+    return store.get(doc_id)._say(character, text, frame, voice=voice)
+
+
+@mcp.tool()
+@qt_tool
+def sound_report(doc_id: str) -> str:
+    """TIER 0 for AUDIO - the mix as numbers, no listening required. Free.
+
+    You cannot hear your own soundtrack; this is how you check it anyway:
+    the cue sheet (what plays when), peak dBFS (quiet mixes read below -20;
+    the limiter guarantees no clipping), and pile-up warnings when too many
+    cues land together. The human ear is the final tier - preview_for_human
+    writes an MP4 with the soundtrack when audio exists.
+    """
+    s = store.get(doc_id)
+    if not s.has_audio:
+        return ("no audio in this scene - auto_sfx derives cues from the "
+                "motion; add_sound/music/say add more")
+    _, report = s.audio_mix()
+    return report
 
 
 # ------------------------------------------------------------------- assets
@@ -497,6 +562,22 @@ PRINCIPLES (apply to anything: a ball, a person, a logo)
   principles.squash_stretch(speed)  -> Vec2 scale, area preserved
   principles.arc(a, b, t, height)   # living things move in arcs
 
+AUDIO (sound is data on the same doc; exports mux it into mp4/webm)
+  auto_sfx()                         the foley pass: footsteps, hits, whooshes,
+                                     landings, expression pops - derived from
+                                     the motion, on the right frames, panned to
+                                     where they happen. Run after motion is final.
+  auto_sfx({"plant": None})          silence a kind; or remap {"hit": "splat"}
+  add_sound("boing", frame, gain=1, pan=0)   one manual cue
+     builtins: boing thud step pop whoosh slide_up slide_down splat ding
+     new sounds = sfx assets: JSON synth patches (see save_asset), cued by name
+  music(seed=7, bpm=104, gain=0.2)   seeded chiptune bed; bad? change the seed.
+     music(seed=None) removes it. Keep gain low - it is a bed, not the show.
+  say("man", "Hello!", frame)        neural TTS + speech bubble for the line's
+     duration. Cached to the project; replays without the TTS installed.
+  You cannot hear - sound_report is your ears-as-numbers (cue sheet, peak dBFS,
+  pile-ups), and preview_for_human writes an MP4 with the soundtrack.
+
 IN SCOPE WITHOUT IMPORT: ground, frames, width, height, scene, Vec2
 
 WORKFLOW - obey this order, it saves you tokens and time:
@@ -504,7 +585,9 @@ WORKFLOW - obey this order, it saves you tokens and time:
   2. lint_animation   is it broken?  FREE. always.
   3. diagnose_animation  is it good? ~500 tokens, names the frame.
   4. render_contact_sheet  only for what numbers cannot judge. ~1,400 tokens.
-  5. preview_for_human  hand the human a GIF; their one sentence beats everything.
+  5. auto_sfx + sound_report  foley from the motion, checked as numbers.
+  6. preview_for_human  hand the human the result; with audio you get an MP4
+     with sound - their one sentence beats everything.
 """
 
 

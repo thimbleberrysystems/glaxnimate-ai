@@ -26,6 +26,23 @@ Not a thin wrapper over Glaxnimate's API. Two constraints drive the design:
 
 The MCP server is the smallest part. The library and the feedback loop are the product.
 
+## Audio (`src/glaxnimate_ai/audio/`)
+
+Sound obeys the same two rules. **Content is data:** SFX are JSON synth patches
+(`sfx` assets, deterministic per patch), music is `{seed, bpm, gain}` in the
+scene doc, dialogue lines are TTS renders **cached as WAVs inside the project**
+so replay never needs piper installed. **Feedback is numbers first:** the model
+cannot hear; `sound_report` (cue sheet, peak dBFS, pile-ups) is tier 0, the
+human ear is the top tier. Cue *placement* is derived from the Timeline IR by
+`auto_sfx` — the same data the linter reads yields foot plants, ball hits and
+launches, so sounds land on the right frames without guessing.
+
+Muxing is PyAV (self-contained wheel — it cannot conflict with the source-built
+Glaxnimate's libav): video packets are remuxed bit-for-bit, audio is AAC-encoded
+(`audio/mux.py`). Tests run with `GLAXNIMATE_AI_TTS_STUB=1` (deterministic beeps)
+so the suite never depends on a 60 MB voice model; the missing-model error
+contains the exact `piper.download_voices` command.
+
 ## Engine setup
 
 **Do not `pip install glaxnimate`.** The PyPI wheel is tagged `py3-none` but is

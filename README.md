@@ -247,25 +247,79 @@ as a character? is the composition any good?* — does it render an image. Final
 `preview_for_human` hands **you** a GIF, because your one sentence of feedback
 ("legs too stiff") is the highest-signal input in the whole system.
 
-### The 17 tools
+### The 21 tools
 
 | Tool | Tier | Purpose |
 |---|---|---|
 | `new_document` | build | start a scene → `doc_id` |
 | `run_script` | build | run Python against the cartoon library (the workhorse) |
 | `cartoon_api` | build | dump the library's vocabulary |
-| `inspect_document` | build | structured tree of what's in the scene |
+| `describe_scene` | build | the scene as readable data (scenes persist across restarts) |
 | `lint_animation` | 0 · free | is it broken? contact slip, joints, bounds, strobing |
 | `diagnose_animation` | 1 · ~500 tok | is it good? spacing, arcs, balance, silhouette |
 | `render_contact_sheet` | 2 · image | whole motion as one numbered grid |
 | `render_frame` | 2 · image | one frame, full size |
 | `render_motion_trail` | 2 · image | onion-skin, for checking arcs |
-| `save_asset` / `load_asset` / `list_assets` | assets | grow the vocabulary: new creatures, gaits, props, faces as JSON |
-| `describe_scene` | build | the scene as readable data (scenes persist across restarts) |
-| `export` | output | Lottie · MP4 · WebM · WebP · GIF · SVG · PNG · rawr |
-| `preview_for_human` | 4 · human | write a GIF for you to watch |
+| `auto_sfx` | sound | the foley pass: cues derived from the motion itself |
+| `add_sound` | sound | one manual cue (builtin patch or saved sfx asset) |
+| `say` | sound | a character speaks — local neural TTS + speech bubble |
+| `sound_report` | 0 · free | the mix as numbers: cue sheet, peak dBFS, pile-ups |
+| `save_asset` / `load_asset` / `list_assets` | assets | grow the vocabulary: creatures, gaits, props, faces, sounds as JSON |
+| `export` | output | Lottie · MP4 (+audio) · WebM (+audio) · WebP · GIF · SVG · PNG · rawr |
+| `preview_for_human` | 4 · human | write a GIF for you to watch (plus an MP4 with sound when audio exists) |
 | `open_in_gui` | gui | open the scene in Glaxnimate |
-| `gui_live_run` | gui | edit a *running* Glaxnimate window live |
+| `gui_live_run` / `gui_live_status` | gui | edit a *running* Glaxnimate window live |
+
+---
+
+## Audio
+
+Exports aren't silent. Sound follows the same rule as everything else here —
+**content is data, code is engine** — and the same critic ethos: numbers before
+ears.
+
+**Sound effects are synth patches, not sample files.** Classic cartoon SFX were
+physically synthesized in the first place (springs, slide whistles, pitch
+sweeps), so an `sfx` asset is a small JSON patch — oscillator, pitch sweep,
+envelope — rendered deterministically. Nine ship built in (`boing`, `thud`,
+`step`, `pop`, `whoosh`, `slide_up`, `slide_down`, `splat`, `ding`); the model
+authors new ones with `save_asset` and cues them by name. No licenses, no
+downloads, and a patch is something a model can *iterate on* like a body or a
+face.
+
+**Placement is derived, not guessed.** The Timeline IR already computes — for
+the linter — exactly the physical facts a foley artist works from: when a foot
+plants, when a ball meets the ground, when a body goes airborne. `auto_sfx`
+turns those events into cues on the right frames, panned to where they happen
+on screen. The same walk that lints clean gets its footsteps for free.
+
+**Music is a seeded chiptune bed.** `music(seed=7, bpm=104)` renders a square-wave
+melody on a major pentatonic over a I–V–vi–IV bass — the register the visuals
+already live in. Deterministic per seed: if it sounds naff, change the seed.
+It's a data field in the scene document, not a composition system.
+
+**Dialogue is local neural TTS** ([piper](https://github.com/OHF-Voice/piper1-gpl)).
+`say("man", "What a lovely day!", frame=20)` synthesizes the line, holds a
+speech bubble above the speaker for its duration, and **caches the rendered
+audio inside the project directory** — a scene replays its dialogue forever
+without piper installed, the same persist-the-samples rule the document uses
+for poses. Voices are one-command downloads (~60 MB, once):
+
+```bash
+.venv/bin/python -m piper.download_voices en_US-lessac-medium --data-dir assets/voices
+```
+
+**The model cannot hear — and the tier ladder already covers that.**
+`sound_report` is tier 0 for audio: the cue sheet, peak dBFS, clipping count
+(always 0 — the bus runs through a soft limiter), and warnings when cues pile
+up. The human ear is the top tier: when a scene has audio, `preview_for_human`
+writes an MP4 with the soundtrack next to the GIF, and `export` to MP4/WebM
+muxes the mix in automatically (PyAV — no system ffmpeg, no re-encode of the
+video stream).
+
+Honest limits: the model never hears its own output (the numeric report and
+your ears close that loop); the music generator is deliberately simple; piper
+needs network once per voice, then everything is offline.
 
 ---
 
