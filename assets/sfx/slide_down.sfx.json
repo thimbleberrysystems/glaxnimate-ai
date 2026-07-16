@@ -1,0 +1,14 @@
+{
+ "version": 1,
+ "kind": "sfx",
+ "layers": [
+  {
+   "osc": "triangle",
+   "f0": 950,
+   "f1": 320,
+   "dur": 0.5,
+   "decay": 3.2,
+   "gain": 0.6
+  }
+ ]
+}

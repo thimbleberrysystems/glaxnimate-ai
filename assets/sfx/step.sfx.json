@@ -1,0 +1,21 @@
+{
+ "version": 1,
+ "kind": "sfx",
+ "layers": [
+  {
+   "osc": "noise",
+   "lp": 900,
+   "dur": 0.07,
+   "decay": 55,
+   "gain": 0.5
+  },
+  {
+   "osc": "sine",
+   "f0": 170,
+   "f1": 110,
+   "dur": 0.05,
+   "decay": 45,
+   "gain": 0.3
+  }
+ ]
+}

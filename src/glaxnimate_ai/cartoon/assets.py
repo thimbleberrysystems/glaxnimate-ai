@@ -37,9 +37,9 @@ __all__ = [
 ]
 
 VERSION = 1
-KINDS = ("body", "gait", "prop", "action", "face")
+KINDS = ("body", "gait", "prop", "action", "face", "sfx")
 _DIRS = {"body": "bodies", "gait": "gaits", "prop": "props",
-         "action": "actions", "face": "faces"}
+         "action": "actions", "face": "faces", "sfx": "sfx"}
 
 
 def assets_root() -> Path:
@@ -325,8 +325,14 @@ def load_face(name: str) -> dict:
 
 
 # ------------------------------------------------------------------ generic
+def _sfx_validate(data: dict) -> dict:
+    from ..audio.synth import sfx_validate
+
+    return sfx_validate(data)
+
+
 _VALIDATORS = {"body": body_from_data, "gait": register_gait, "prop": prop_validate,
-               "face": face_validate}
+               "face": face_validate, "sfx": _sfx_validate}
 
 
 def save_asset(kind: str, name: str, data: dict) -> Path:

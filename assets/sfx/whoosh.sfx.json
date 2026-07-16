@@ -1,0 +1,14 @@
+{
+ "version": 1,
+ "kind": "sfx",
+ "layers": [
+  {
+   "osc": "noise",
+   "lp": 1400,
+   "dur": 0.35,
+   "attack": 0.12,
+   "decay": 9,
+   "gain": 0.6
+  }
+ ]
+}
