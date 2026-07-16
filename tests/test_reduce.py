@@ -294,3 +294,19 @@ def test_props_scale_per_axis_at_draw_time():
     w3, h3 = bar_bbox(2.0)              # uniform still works
     assert w3 == pytest.approx(w1 * 2, abs=3)
     assert h3 == pytest.approx(h1 * 2, abs=3)
+
+
+def test_shot_refuses_to_silently_clobber_a_narrower_gate():
+    """A broad prefix re-gating layers that already have their own shot is
+    invisible when it happens and baffling afterwards: every mark that should
+    appear on its own frame turns on at once. Caught twice by hand; now it is
+    an error."""
+    from glaxnimate_ai.engine.session import SessionStore
+
+    s = SessionStore().create(width=200, height=200, frames=100)
+    s._add_prop({"version": 1, "kind": "prop",
+                 "shapes": [{"type": "rect", "x": 0, "y": 0, "w": 5, "h": 5}]},
+                x=50, layer_name="b1.tick")
+    s._shot("b1.tick", 40, 100)
+    with pytest.raises(ValueError, match="overwrite the gate"):
+        s._shot("b1", 0, 100)

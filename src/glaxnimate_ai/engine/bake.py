@@ -207,6 +207,7 @@ def bake_rig(
     pose_fn: Callable[[float], Pose],
     *,
     frames: int,
+    first: int = 0,
     color: str | None = None,
     thickness: float | None = None,
     joint_color: str | None = "#e8543f",
@@ -225,6 +226,13 @@ def bake_rig(
     world space every bone moves every frame because the body does, but in
     parent space a walking skeleton is nearly periodic rotations over *static*
     offsets — which is what makes ~10 keys describe what took ~200.
+
+    `first` bakes only `first..frames`, for a character that appears partway
+    through. It is not a micro-optimisation: a film of six shots bakes every
+    creature across the *whole* timeline otherwise, and the reducer's greedy
+    refinement is worse than linear in the sample count — a four-creature reel
+    with onion-skin ghosts blew a three-minute budget baking frames nobody can
+    see. Keys are written at `first + i`, so the clip lands where it belongs.
     """
     rig = body.rig
 
@@ -232,7 +240,7 @@ def bake_rig(
     root_pos: list[Vec2] = []
     root_rot: list[float] = []
     local_rot: dict[str, list[float]] = {name: [] for name in rig.joints}
-    for f in range(frames + 1):
+    for f in range(first, frames + 1):
         pose = pose_fn(float(f))
         root_pos.append(pose.root)
         j_root = rig.joints[rig.root_name]
@@ -275,8 +283,10 @@ def bake_rig(
 
     # ---- keys
     n_keys = 0
-    n_keys += _write_point(root_layer.transform.position, reduce_point(root_pos, tol=TOL_PX))
-    n_keys += _write_scalar(root_layer.transform.rotation, reduce_scalar(root_rot, tol=TOL_DEG))
+    n_keys += _write_point(root_layer.transform.position,
+                           reduce_point(root_pos, tol=TOL_PX), offset=first)
+    n_keys += _write_scalar(root_layer.transform.rotation,
+                            reduce_scalar(root_rot, tol=TOL_DEG), offset=first)
 
     # A contact chain is the contact joint and everything above it to the root —
     # the bones whose angles decide where a planted foot actually lands.
@@ -292,7 +302,9 @@ def bake_rig(
         off = j.offset if j.offset is not None else Vec2(rig.joints[j.parent].length, 0.0)
         lay.transform.position.value = utils.Point(off.x, off.y)  # static: the whole point
         tol = TOL_DEG_LEG if name in contact_chain else TOL_DEG
-        n_keys += _write_scalar(lay.transform.rotation, reduce_scalar(local_rot[name], tol=tol))
+        n_keys += _write_scalar(lay.transform.rotation,
+                                reduce_scalar(local_rot[name], tol=tol),
+                                offset=first)
 
     if stats is not None:
         stats["keyframes"] = n_keys

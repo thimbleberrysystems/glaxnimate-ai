@@ -1,0 +1,152 @@
+{
+ "version": 1,
+ "kind": "body",
+ "joints": [
+  {
+   "name": "hips",
+   "parent": null,
+   "length": 0
+  },
+  {
+   "name": "body",
+   "parent": "hips",
+   "length": 70,
+   "rest_angle": -12,
+   "offset": [
+    0,
+    0
+   ],
+   "mass": 55
+  },
+  {
+   "name": "neck",
+   "parent": "body",
+   "length": 34,
+   "rest_angle": -78,
+   "mass": 8
+  },
+  {
+   "name": "head",
+   "parent": "neck",
+   "length": 14,
+   "rest_angle": 66,
+   "mass": 7
+  },
+  {
+   "name": "tail",
+   "parent": "hips",
+   "length": 34,
+   "rest_angle": 195,
+   "offset": [
+    0,
+    0
+   ],
+   "mass": 6
+  },
+  {
+   "name": "thigh_l",
+   "parent": "hips",
+   "length": 26,
+   "rest_angle": 90,
+   "offset": [
+    0,
+    0
+   ],
+   "mass": 8
+  },
+  {
+   "name": "shin_l",
+   "parent": "thigh_l",
+   "length": 26,
+   "contact": true,
+   "mass": 4
+  },
+  {
+   "name": "thigh_r",
+   "parent": "hips",
+   "length": 26,
+   "rest_angle": 90,
+   "offset": [
+    0,
+    0
+   ],
+   "mass": 8
+  },
+  {
+   "name": "shin_r",
+   "parent": "thigh_r",
+   "length": 26,
+   "contact": true,
+   "mass": 4
+  }
+ ],
+ "limbs": [
+  {
+   "upper": "thigh_l",
+   "lower": "shin_l"
+  },
+  {
+   "upper": "thigh_r",
+   "lower": "shin_r"
+  }
+ ],
+ "swings": [
+  {
+   "joint": "tail",
+   "phase": 0.0,
+   "amplitude": 8.0
+  }
+ ],
+ "bones": [
+  "thigh_r",
+  "shin_r",
+  "tail",
+  "body",
+  "neck",
+  "head",
+  "thigh_l",
+  "shin_l"
+ ],
+ "parts": {
+  "body": {
+   "width": 34,
+   "color": "#4a8fb5"
+  },
+  "neck": {
+   "width": 14,
+   "color": "#4a8fb5"
+  },
+  "head": {
+   "width": 10,
+   "color": "#4a8fb5",
+   "head": [
+    22,
+    18
+   ],
+   "tip": 4
+  },
+  "tail": {
+   "width": 9,
+   "color": "#3a7295",
+   "tip": 5
+  },
+  "thigh_l": {
+   "width": 8,
+   "color": "#d9a441"
+  },
+  "shin_l": {
+   "width": 6,
+   "color": "#d9a441",
+   "tip": 4
+  },
+  "thigh_r": {
+   "width": 8,
+   "color": "#b5893a"
+  },
+  "shin_r": {
+   "width": 6,
+   "color": "#b5893a",
+   "tip": 4
+  }
+ }
+}

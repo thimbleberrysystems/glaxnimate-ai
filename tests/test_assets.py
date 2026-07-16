@@ -233,3 +233,44 @@ def test_slots_round_trip_through_body_data():
     rebuilt = A.body_from_data(A.body_to_data(h))
     assert rebuilt.slots == h.slots
     assert "face" in rebuilt.slots
+
+
+def test_the_tardigrade_walks_on_eight_legs():
+    """The generality claim at its limit. Eight-limb coordination is the thing
+    that looks hardest in the reel, and it is eight numbers in a phase table —
+    a metachronal wave, which is what real water bears and millipedes walk with.
+    No Python knows what a tardigrade is."""
+    from glaxnimate_ai.cartoon.assets import load_body, load_gait
+    from glaxnimate_ai.cartoon.presets import make_gait
+    from glaxnimate_ai.feedback.lint import lint_rig
+
+    load_gait("trundle")
+    body = load_body("tardigrade")
+    assert len(body.limbs) == 8
+
+    gait = make_gait(body, "trundle", cycle_frames=34)
+    ground = 400.0
+
+    def pose_fn(t):
+        from glaxnimate_ai.cartoon.gait import pose_at
+        return pose_at(body.rig, gait, t, ground_y=ground, body_x0=60.0)
+
+    rep = lint_rig(body, pose_fn, frames=68, ground_y=ground,
+                   limbs=[(li.upper, li.lower) for li in body.limbs],
+                   canvas=(900, 500))
+    assert rep.ok, rep.format()
+
+
+def test_the_metachronal_wave_is_a_phase_table_not_code():
+    """Each pair fires a quarter-cycle after the one behind it; near and far
+    alternate by a half. That ripple is the whole gait."""
+    from glaxnimate_ai.cartoon.assets import load_gait
+    from glaxnimate_ai.cartoon.gait import gait_phases
+
+    load_gait("trundle")
+    phases = gait_phases("trundle", 8)
+    assert len(phases) == 8
+    assert len(set(phases)) == 4, "a wave reuses four offsets across near/far"
+    for i in range(0, 8, 2):
+        near, far = phases[i], phases[i + 1]
+        assert abs(((far - near) % 1.0) - 0.5) < 1e-6, "near/far must alternate"

@@ -142,13 +142,13 @@ class Session:
         color: str | None = None, thickness: float | None = None,
         face: str | dict | None = None, record: bool = True,
         poses: list | None = None, face_data: dict | None = None,
-        expressions: list | None = None,
+        expressions: list | None = None, first: int = 0,
     ) -> Character:
         """Bake + register + record. Every character path funnels through here so
         the scene document always matches what is on the canvas."""
         layers: dict = {}
         bake_rig(
-            self.scene, body, pose_fn, frames=self.frames,
+            self.scene, body, pose_fn, frames=self.frames, first=first,
             color=color, thickness=thickness, layer_name=name, layers_out=layers,
         )
         limb_pairs = [(li.upper, li.lower) for li in gait.limbs] if gait else []
@@ -272,6 +272,7 @@ class Session:
         name: str = "character",
         color: str | None = None,
         thickness: float | None = None,
+        first: int = 0,
     ) -> Character:
         """Bake a character driven by an arbitrary pose function (a jump, a wave).
 
@@ -280,7 +281,7 @@ class Session:
         joint integrity, bounds all still apply).
         """
         return self._bake_character(body, pose_fn, gait=None, name=name,
-                                    color=color, thickness=thickness)
+                                    color=color, thickness=thickness, first=first)
 
     # ------------------------------------------------------------------ audio
     def _add_sound(self, sfx, frame: float, *, gain: float = 1.0,
@@ -604,6 +605,20 @@ class Session:
         if not want:
             names = sorted({sh.name.split(".")[0] for sh in self.scene.comp.shapes})
             raise ValueError(f"no layers named {prefix!r} or {prefix!r}.*; have {names}")
+
+        # A broad prefix silently re-gating layers that already have their own,
+        # narrower shot is a real trap: `shot("s5", ...)` matches `s5.tick0` and
+        # overwrites the gate that made the mark appear on its own frame. It
+        # looks like nothing happened and everything turns on at once.
+        already = [sh.name for sh in want if sh.opacity.keyframe_count > 0]
+        if already:
+            raise ValueError(
+                f"shot({prefix!r}) would overwrite the gate already on "
+                f"{', '.join(already[:3])}"
+                f"{'...' if len(already) > 3 else ''}. Gate the parts or the "
+                f"whole, not both — name sub-shots outside {prefix!r}.* if they "
+                f"need their own timing."
+            )
 
         keys: list[tuple[float, float]] = []
         if start > 0:
