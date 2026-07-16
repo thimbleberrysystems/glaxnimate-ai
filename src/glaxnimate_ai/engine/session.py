@@ -376,16 +376,101 @@ class Session:
         self.doc["audio"]["music"] = spec
         return f"music: seed {spec['seed']}, {spec['bpm']:g} bpm, gain {spec['gain']:g}"
 
+    def _say(self, character, text: str, frame: float,
+             *, voice: str | None = None, gain: float = 1.0,
+             bubble: bool = True) -> str:
+        """A character speaks. TTS renders now and is CACHED to the project dir,
+        so the scene replays its dialogue without piper installed — the same
+        persist-the-samples rule the doc uses for poses. A speech bubble shows
+        above the speaker for the duration (bubble=False for off-screen voice).
+        """
+        from ..audio import voice as V
+
+        ch = character if isinstance(character, Character) else next(
+            (c for c in self.characters if c.name == character), None
+        )
+        if ch is None and isinstance(character, str) and character:
+            raise ValueError(
+                f"no character {character!r}; have {[c.name for c in self.characters]}"
+            )
+
+        vname = voice or V.DEFAULT_VOICE
+        samples = V.synthesize(text, vname)
+        dur_s = len(samples) / 44100.0
+
+        n = len(self.doc["audio"]["dialogue"])
+        wav_path = SD.doc_path(self.doc_id).parent / "audio" / f"line{n}.wav"
+        V.save_line(samples, wav_path)
+
+        entry = {
+            "frame": float(frame), "character": ch.name if ch else None,
+            "text": text, "voice": vname, "gain": gain,
+            "wav": wav_path.name, "dur": dur_s, "bubble": bool(bubble and ch),
+        }
+        self.doc["audio"]["dialogue"].append(entry)
+        if entry["bubble"]:
+            self._draw_bubble(ch, frame, dur_s)
+        return f"{ch.name if ch else 'voice'} says {text!r} at f{frame:g} ({dur_s:.1f}s)"
+
+    def _draw_bubble(self, ch: Character, frame: float, dur_s: float) -> None:
+        """A minimal speech bubble above the speaker's head, held for the line."""
+        from glaxnimate import model, utils
+
+        f = min(int(frame), self.frames)
+        rec = next((r for r in self.doc["characters"] if r["name"] == ch.name), None)
+        if rec and rec["poses"]:
+            root = rec["poses"][min(f, len(rec["poses"]) - 1)]["root"]
+        else:
+            pose = ch.pose_fn(float(f))
+            root = [pose.root.x, pose.root.y]
+        x = root[0] + 60
+        y = root[1] - ch.body.leg_length * 0.9
+
+        lay = self.scene.layer(f"{ch.name}.bubble")
+        g = lay.add_shape("Group")
+        g.add_shape("Fill").color.value = "#ffffff"
+        e = g.add_shape("Ellipse")
+        e.size.value = utils.Size(110, 64)
+        e.position.value = utils.Point(x, y)
+        dots = lay.add_shape("Group")
+        dots.add_shape("Fill").color.value = "#44464f"
+        for i in range(3):
+            d = dots.add_shape("Ellipse")
+            d.size.value = utils.Size(10, 10)
+            d.position.value = utils.Point(x - 22 + i * 22, y)
+
+        end = min(frame + dur_s * self.scene.fps, self.frames)
+        for prop_frame, value in ((0.0, 0.0), (float(frame), 1.0), (float(end), 0.0)):
+            lay.opacity.set_keyframe(prop_frame, value)
+            tr = model.KeyframeTransition()
+            tr.hold = True
+            lay.opacity.set_transition(prop_frame, tr)
+
     def _extra_audio(self):
         """Music beds and dialogue lines, rendered onto the same bus as cues."""
         extra = []
-        music = (self.doc.get("audio") or {}).get("music")
+        audio = self.doc.get("audio") or {}
+        music = audio.get("music")
         if music:
             from ..audio.music import render_music
 
             duration = self.frames / self.scene.fps
             bed = render_music(music, duration_s=duration)
             extra.append((0.0, bed, music.get("gain", 0.25), 0.0))
+        for entry in audio.get("dialogue", []):
+            from ..audio.voice import load_line
+
+            wav = SD.doc_path(self.doc_id).parent / "audio" / entry["wav"]
+            if not wav.exists():
+                continue  # cache lost; the report will show fewer spans
+            samples, sr = load_line(wav)
+            if sr != 44100:
+                import numpy as np
+                n_out = int(len(samples) * 44100 / sr)
+                samples = np.interp(np.linspace(0, len(samples) - 1, n_out),
+                                    np.arange(len(samples)), samples)
+            extra.append((entry["frame"] / self.scene.fps, samples,
+                          entry.get("gain", 1.0), 0.0))
         return extra
 
     @property
@@ -525,6 +610,7 @@ class Session:
             "add_sound": self._add_sound,
             "auto_sfx": self._auto_sfx,
             "music": self._music,
+            "say": self._say,
             # the stage
             "add_character": self._add_character,
             "add_object": self._add_object,
@@ -587,6 +673,12 @@ class Session:
                 shape=ob.get("shape", "Ellipse"), size=size,
                 color=ob.get("color", "#e8543f"), layer_name=ob["name"],
             )
+        for entry in (doc.get("audio") or {}).get("dialogue", []):
+            if entry.get("bubble") and entry.get("character"):
+                ch = next((c for c in session.characters
+                           if c.name == entry["character"]), None)
+                if ch:
+                    session._draw_bubble(ch, entry["frame"], entry["dur"])
         return session
 
     # ---------------------------------------------------------------- running

@@ -260,3 +260,64 @@ def test_music_joins_the_mix_and_persists():
     assert reborn.doc["audio"]["music"]["seed"] == 3
     r2, _ = reborn.audio_mix()
     assert np.array_equal(result.buffer, r2.buffer), "music must replay identically"
+
+
+# ---------------------------------------------------------------- dialogue
+@pytest.fixture
+def tts_stub(monkeypatch):
+    """Tests exercise caching/mixing/persistence — piper's acoustics are not
+    ours to test, and the 60MB model must not be a test dependency."""
+    monkeypatch.setenv("GLAXNIMATE_AI_TTS_STUB", "1")
+
+
+def test_say_records_caches_and_mixes(tts_stub):
+    from glaxnimate_ai.engine import scene_doc as SD
+
+    s = _session(
+        "man = human()\n"
+        "add_character(man, make_gait(man, 'walk', cycle_frames=24), x=90, name='man')\n"
+        "print(say('man', 'Hello there!', 10))\n"
+    )
+    d = s.doc["audio"]["dialogue"]
+    assert len(d) == 1 and d[0]["text"] == "Hello there!" and d[0]["dur"] > 0.3
+    wav = SD.doc_path(s.doc_id).parent / "audio" / d[0]["wav"]
+    assert wav.exists(), "the line must be cached to disk"
+
+    result, report = s.audio_mix()
+    active = float(np.mean(np.abs(result.buffer) > 1e-4))
+    assert active > 0.1, "the spoken line never reached the mix"
+
+
+def test_dialogue_replays_without_tts(tts_stub, monkeypatch):
+    """The whole point of the cache: a reloaded scene speaks even if piper (or
+    the stub) is gone — samples were persisted, not the program."""
+    from glaxnimate_ai.engine.session import Session
+
+    s = _session(
+        "man = human()\n"
+        "add_character(man, make_gait(man, 'walk', cycle_frames=24), x=90, name='man')\n"
+        "say('man', 'Persist me', 8)\n"
+    )
+    before, _ = s.audio_mix()
+
+    monkeypatch.delenv("GLAXNIMATE_AI_TTS_STUB")  # no synthesis available now
+    reborn = Session.replay(s.doc_id)
+    after, _ = reborn.audio_mix()
+    assert np.array_equal(before.buffer, after.buffer)
+
+
+def test_say_to_a_ghost_teaches(tts_stub):
+    from glaxnimate_ai.engine.session import SessionStore
+
+    s = SessionStore().create(width=300, height=200, frames=8)
+    res = s.run("say('nobody', 'hi', 0)")
+    assert not res.ok and "nobody" in res.format()
+
+
+def test_missing_voice_model_error_contains_the_fix(tmp_path, monkeypatch):
+    monkeypatch.setenv("GLAXNIMATE_AI_ASSETS", str(tmp_path))  # empty voices dir
+    monkeypatch.delenv("GLAXNIMATE_AI_TTS_STUB", raising=False)
+    from glaxnimate_ai.audio.voice import synthesize
+
+    with pytest.raises(FileNotFoundError, match="download_voices"):
+        synthesize("hello", "en_US-lessac-medium")

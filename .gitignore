@@ -7,3 +7,7 @@ build.log
 .pytest_cache/
 .ruff_cache/
 /projects/
+
+# downloaded piper voice models (~60MB each); see audio/voice.py for the command
+assets/voices/*.onnx
+assets/voices/*.onnx.json
