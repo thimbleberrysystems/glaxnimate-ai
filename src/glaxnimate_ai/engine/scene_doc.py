@@ -55,6 +55,7 @@ def empty_doc(*, width: int, height: int, frames: int, fps: float,
         "canvas": {"width": width, "height": height, "frames": frames, "fps": fps},
         "ground_y": ground_y,
         "scenery": [], "props": [], "characters": [], "objects": [],
+        "audio": {"cues": [], "music": None, "dialogue": []},
     }
 
 
@@ -72,6 +73,7 @@ def load_doc(doc_id: str) -> dict:
             f"no saved scene {doc_id!r}; saved scenes: {list_docs()}"
         )
     doc = json.loads(p.read_text())
+    doc.setdefault("audio", {"cues": [], "music": None, "dialogue": []})
     if doc.get("version") != VERSION:
         raise ValueError(
             f"scene {doc_id!r} has version {doc.get('version')!r}; "
@@ -153,6 +155,16 @@ def describe(doc: dict) -> str:
         lines.append(f"character {ch['name']!r}: {joints} joints{face}{expr}")
     for ob in doc["objects"]:
         lines.append(f"object {ob['name']!r}: {len(ob['samples'])} motion samples")
+    audio = doc.get("audio") or {}
+    bits = []
+    if audio.get("cues"):
+        bits.append(f"{len(audio['cues'])} sfx cue(s)")
+    if audio.get("music"):
+        bits.append(f"music (seed {audio['music'].get('seed')})")
+    if audio.get("dialogue"):
+        bits.append(f"{len(audio['dialogue'])} line(s) of dialogue")
+    if bits:
+        lines.append("audio: " + ", ".join(bits))
     if len(lines) == 1:
         lines.append("(empty scene)")
     return "\n".join(lines)

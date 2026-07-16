@@ -282,6 +282,93 @@ class Session:
         return self._bake_character(body, pose_fn, gait=None, name=name,
                                     color=color, thickness=thickness)
 
+    # ------------------------------------------------------------------ audio
+    def _add_sound(self, sfx, frame: float, *, gain: float = 1.0,
+                   pan: float | None = None) -> str:
+        """Place one sound cue. `sfx` is a name (boing, thud, step, pop, whoosh,
+        slide_up, slide_down, splat, ding, or a saved sfx asset) or an inline
+        patch dict. `pan=None` centres it."""
+        from ..audio.mix import resolve_patch
+
+        resolve_patch(sfx)  # teaching error now, not at export time
+        self.doc["audio"]["cues"].append({
+            "frame": float(frame), "sfx": sfx, "gain": float(gain),
+            "pan": 0.0 if pan is None else float(pan),
+        })
+        return f"cue: {sfx if isinstance(sfx, str) else 'inline patch'} at f{frame:g}"
+
+    #: what auto_sfx plays for each motion event; override per call
+    _SFX_MAP = {"plant": "step", "hit": "boing", "launch": "whoosh",
+                "land": "thud", "expression": "pop"}
+
+    def _auto_sfx(self, mapping: dict | None = None, *, clear: bool = True,
+                  gain: float = 1.0) -> str:
+        """Place cues from the motion itself — the foley pass.
+
+        The same Timeline data the linter reads yields foot plants, ball-ground
+        hits, jump launches/landings and expression swaps; each becomes a cue,
+        panned to where it happens on screen. Map an event kind to None to
+        silence it: auto_sfx({"plant": None}).
+        """
+        from ..audio import events as EV
+        from ..cartoon import timeline as tlmod
+
+        sfx_map = {**self._SFX_MAP, **(mapping or {})}
+        width = float(self.scene.comp.width)
+        found: list[EV.MotionEvent] = []
+
+        for ch in self.characters:
+            tl = tlmod.from_pose_fn(ch.body, ch.pose_fn, frames=self.frames)
+            found += EV.plant_onsets(tl, ground_y=self.ground_y)
+            found += EV.airborne_spans(tl, ground_y=self.ground_y)
+        for name, samples, radius in self.objects:
+            found += EV.object_hits(samples, radius=radius,
+                                    ground_y=self.ground_y, name=name)
+        found += EV.expression_stings(self.doc)
+
+        if clear:
+            self.doc["audio"]["cues"] = [
+                c for c in self.doc["audio"]["cues"] if not c.get("auto")
+            ]
+        placed = 0
+        for ev in sorted(found, key=lambda e: e.frame):
+            sfx = sfx_map.get(ev.kind)
+            if sfx is None:
+                continue
+            pan = max(-0.6, min(0.6, (ev.x / width) * 1.2 - 0.6))
+            self.doc["audio"]["cues"].append({
+                "frame": float(ev.frame), "sfx": sfx, "gain": gain,
+                "pan": round(pan, 3), "auto": True, "event": ev.kind,
+            })
+            placed += 1
+        kinds = {}
+        for ev in found:
+            kinds[ev.kind] = kinds.get(ev.kind, 0) + 1
+        summary = ", ".join(f"{v} {k}" for k, v in sorted(kinds.items()))
+        return f"placed {placed} cue(s) from motion ({summary or 'no events found'})"
+
+    def audio_mix(self):
+        """Render the scene's cue sheet to a stereo buffer + report. Used by the
+        export path and the sound_report tool."""
+        from ..audio.mix import Cue, mix_report, render_cues
+
+        cues = [Cue(c["frame"], c["sfx"], c.get("gain", 1.0), c.get("pan", 0.0))
+                for c in self.doc["audio"]["cues"]]
+        extra = self._extra_audio()
+        result = render_cues(cues, frames=self.frames, fps=self.scene.fps,
+                             extra=extra)
+        report = mix_report(cues, result, frames=self.frames, fps=self.scene.fps)
+        return result, report
+
+    def _extra_audio(self):
+        """Music beds and dialogue lines, rendered; extended by later phases."""
+        return []
+
+    @property
+    def has_audio(self) -> bool:
+        a = self.doc.get("audio") or {}
+        return bool(a.get("cues") or a.get("music") or a.get("dialogue"))
+
     _SCENERY = ("sky", "ground", "house", "school", "tree", "cloud", "sun")
 
     def _scenery(self, template: str, *, layer_name: str = "backdrop",
@@ -411,6 +498,8 @@ class Session:
             "load_face": assets.load_face,
             "set_expression": self._set_expression,
             "scenery": self._scenery,
+            "add_sound": self._add_sound,
+            "auto_sfx": self._auto_sfx,
             # the stage
             "add_character": self._add_character,
             "add_object": self._add_object,

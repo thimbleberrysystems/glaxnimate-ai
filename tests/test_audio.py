@@ -100,3 +100,103 @@ def test_wav_writes_and_reads_back(tmp_path):
 def test_empty_cue_sheet_says_so():
     res = render_cues([], frames=24, fps=24)
     assert "empty" in mix_report([], res, frames=24, fps=24)
+
+
+# ---------------------------------------------------- motion events -> cues
+def _session(script, frames=48, width=760):
+    from glaxnimate_ai.engine.session import SessionStore
+
+    s = SessionStore().create(width=width, height=400, frames=frames)
+    res = s.run(script)
+    assert res.ok, res.format()
+    return s
+
+
+def test_a_walk_gets_footsteps_on_its_plants():
+    """Two cycles, two feet: about four plant onsets, each panned to the foot."""
+    s = _session(
+        "man = human()\n"
+        "add_character(man, make_gait(man, 'walk', cycle_frames=24), x=90, name='man')\n"
+        "print(auto_sfx())\n"
+    )
+    cues = s.doc["audio"]["cues"]
+    steps = [c for c in cues if c["sfx"] == "step"]
+    assert 3 <= len(steps) <= 5, f"expected ~4 footfalls, got {len(steps)}"
+    assert all(c["frame"] > 0 for c in steps), "frame 0 is a stance, not a stomp"
+
+
+def test_a_bouncing_ball_gets_boings_on_its_hits():
+    s = _session(
+        "ball = motion.bounce(x0=100, x1=600, ground_y=ground, apex=170,"
+        " frames=frames, bounces=4, radius=24)\n"
+        "add_object(ball, size=Vec2(48, 48))\n"
+        "auto_sfx()\n"
+    )
+    boings = [c for c in s.doc["audio"]["cues"] if c["sfx"] == "boing"]
+    assert 3 <= len(boings) <= 5, f"expected ~4 ground hits, got {len(boings)}"
+
+
+def test_a_jump_gets_a_whoosh_and_a_thud():
+    s = _session(
+        "man = human()\n"
+        "add_action(man, actions.jump(man, ground_y=ground, x=300, height=150,"
+        " frames=frames), name='jumper')\n"
+        "auto_sfx()\n",
+        frames=36,
+    )
+    kinds = [c["sfx"] for c in s.doc["audio"]["cues"]]
+    assert kinds.count("whoosh") == 1, kinds
+    assert kinds.count("thud") == 1, kinds
+
+
+def test_a_run_does_not_whoosh_every_stride():
+    """A run's brief flight phases are locomotion, not jumps — the min-airborne
+    threshold must keep them silent."""
+    s = _session(
+        "man = human()\n"
+        "add_character(man, make_gait(man, 'run', cycle_frames=16), x=60, name='man')\n"
+        "auto_sfx()\n"
+    )
+    kinds = [c["sfx"] for c in s.doc["audio"]["cues"]]
+    assert kinds.count("whoosh") == 0, f"a run whooshed: {kinds}"
+
+
+def test_expression_swaps_sting():
+    s = _session(
+        "man = human()\n"
+        "ch = add_character(man, make_gait(man, 'walk', cycle_frames=24),"
+        " x=90, name='man', face='human')\n"
+        "set_expression(ch, 'surprised', 20)\n"
+        "auto_sfx({'plant': None})\n"   # silence the steps; isolate the sting
+    )
+    kinds = [c["sfx"] for c in s.doc["audio"]["cues"]]
+    assert kinds == ["pop"], kinds
+
+
+def test_manual_cues_and_the_mix_report():
+    s = _session("add_sound('ding', 10)\nadd_sound('splat', 30, gain=0.7, pan=0.5)\n")
+    result, report = s.audio_mix()
+    assert "2 cue(s)" in report and "ding" in report
+    assert s.has_audio
+
+
+def test_bad_sfx_name_fails_at_placement_not_export():
+    from glaxnimate_ai.engine.session import SessionStore
+
+    s = SessionStore().create(width=300, height=200, frames=8)
+    res = s.run("add_sound('kaboom', 0)")
+    assert not res.ok and "boing" in res.format()
+
+
+def test_cues_persist_and_replay():
+    from glaxnimate_ai.engine.session import Session
+
+    s = _session(
+        "man = human()\n"
+        "add_character(man, make_gait(man, 'walk', cycle_frames=24), x=90, name='man')\n"
+        "auto_sfx()\nadd_sound('ding', 40)\n"
+    )
+    reborn = Session.replay(s.doc_id)
+    assert reborn.doc["audio"]["cues"] == s.doc["audio"]["cues"]
+    _, report = reborn.audio_mix()
+    assert "cue(s)" in report
