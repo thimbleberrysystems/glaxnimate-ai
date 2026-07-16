@@ -320,6 +320,16 @@ def export(doc_id: str, filename: str, format: str = "json") -> str:
     if fmt is None:
         return f"no exporter for {format!r}"
     path.write_bytes(fmt.save(s.scene.comp))
+
+    # Sound rides along automatically: if the scene has cues (auto_sfx or
+    # add_sound), video formats get the mixed track muxed in.
+    if format in ("mp4", "webm") and s.has_audio:
+        from ..audio.mux import mux_audio
+
+        mix, report = s.audio_mix()
+        mux_audio(path, mix, path)
+        return (f"wrote {path} ({path.stat().st_size:,} bytes) with audio\n"
+                f"{report}")
     return f"wrote {path} ({path.stat().st_size:,} bytes)"
 
 
@@ -388,6 +398,19 @@ def preview_for_human(doc_id: str, filename: str = "preview.gif") -> str:
     OUT.mkdir(exist_ok=True)
     path = OUT / filename
     R.save_gif(s.scene, str(path), step=2)
+    if s.has_audio:
+        # GIFs are mute; give the human an MP4 with the soundtrack too.
+        from glaxnimate import io as gio
+
+        from ..audio.mux import mux_audio
+
+        mp4 = path.with_suffix(".mp4")
+        fmt = gio.registry.from_extension("mp4", gio.Direction.Export)
+        mp4.write_bytes(fmt.save(s.scene.comp))
+        mix, _ = s.audio_mix()
+        mux_audio(mp4, mix, mp4)
+        return (f"wrote {path} and {mp4} (with sound) - "
+                f"ask the user to watch/listen and say what is wrong")
     return f"wrote {path} - ask the user to watch it and say what is wrong"
 
 

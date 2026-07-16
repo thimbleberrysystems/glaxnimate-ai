@@ -200,3 +200,27 @@ def test_cues_persist_and_replay():
     assert reborn.doc["audio"]["cues"] == s.doc["audio"]["cues"]
     _, report = reborn.audio_mix()
     assert "cue(s)" in report
+
+
+# ---------------------------------------------------------------- mux to MP4
+def test_exported_mp4_carries_the_soundtrack(tmp_path):
+    """The full chain: scene -> silent MP4 -> mixed cues muxed in, probed back."""
+    from glaxnimate import io as gio
+
+    from glaxnimate_ai.audio.mux import audio_duration, has_audio_stream, mux_audio
+
+    s = _session(
+        "man = human()\n"
+        "add_character(man, make_gait(man, 'walk', cycle_frames=24), x=80, name='man')\n"
+        "auto_sfx()\n"
+    )
+    fmt = gio.registry.from_extension("mp4", gio.Direction.Export)
+    silent = tmp_path / "silent.mp4"
+    silent.write_bytes(fmt.save(s.scene.comp))
+    assert not has_audio_stream(silent), "glaxnimate export should be video-only"
+
+    mix, _ = s.audio_mix()
+    final = mux_audio(silent, mix, tmp_path / "with_sound.mp4")
+    assert has_audio_stream(final)
+    scene_seconds = s.frames / s.scene.fps
+    assert abs(audio_duration(final) - scene_seconds) < 0.5
