@@ -54,7 +54,7 @@ def empty_doc(*, width: int, height: int, frames: int, fps: float,
         "version": VERSION, "kind": "scene",
         "canvas": {"width": width, "height": height, "frames": frames, "fps": fps},
         "ground_y": ground_y,
-        "scenery": [], "props": [], "characters": [], "objects": [],
+        "scenery": [], "props": [], "characters": [], "objects": [], "shots": [],
         "audio": {"cues": [], "music": None, "dialogue": []},
     }
 

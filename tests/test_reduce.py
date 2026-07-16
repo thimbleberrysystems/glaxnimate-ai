@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import math
 
+import pytest
+
 from glaxnimate_ai.cartoon import timeline as T
 from glaxnimate_ai.cartoon.gait import pose_at
 from glaxnimate_ai.cartoon.geometry import Vec2
@@ -210,3 +212,49 @@ def test_walk_bakes_within_the_key_budget():
              frames=FRAMES, stats=stats)
     assert stats["keyframes"] <= 260, f"budget blown: {stats['keyframes']} keys"
     assert stats["keyframes"] >= 30, "suspiciously few keys - is anything animated?"
+
+
+# ------------------------------------------------- when a clip starts matters
+def test_a_clip_bakes_on_the_frames_its_samples_claim():
+    """The reducer counts keys from 0 because it only sees a list. Every
+    `motion.*` generator starts at frame 0, so index and frame coincide and the
+    lie stays hidden — until a clip starts partway through a film, when the
+    whole thing silently plays at the top of the timeline instead. Measured
+    before the fix: samples labelled 100..150 animated over frames 0..50.
+    """
+    from glaxnimate_ai.cartoon.motion import Sample
+    from glaxnimate_ai.engine.session import SessionStore
+
+    s = SessionStore().create(width=300, height=200, frames=200)
+    smp = [Sample(f, Vec2(50 + (f - 100) * 2, 100)) for f in range(100, 151)]
+    lay = s._add_moving_prop("filing", smp, name="probe")
+    pos = list(lay.shapes)[0].transform.position
+
+    assert pos.value_at_time(0.0).x == pytest.approx(50.0), "clip started early"
+    assert pos.value_at_time(50.0).x == pytest.approx(50.0), "clip started early"
+    assert pos.value_at_time(125.0).x == pytest.approx(100.0, abs=1.0)
+    assert pos.value_at_time(150.0).x == pytest.approx(150.0, abs=1.0)
+    assert pos.value_at_time(200.0).x == pytest.approx(150.0), "clip should hold"
+
+
+def test_a_clip_that_starts_at_zero_is_unchanged():
+    """The fix must not move anything that was already right."""
+    from glaxnimate_ai.cartoon.motion import Sample
+    from glaxnimate_ai.engine.session import SessionStore
+
+    s = SessionStore().create(width=300, height=200, frames=50)
+    smp = [Sample(f, Vec2(float(f) * 2, 100)) for f in range(51)]
+    lay = s._add_moving_prop("filing", smp, name="probe")
+    pos = list(lay.shapes)[0].transform.position
+    assert pos.value_at_time(0.0).x == pytest.approx(0.0, abs=1.0)
+    assert pos.value_at_time(50.0).x == pytest.approx(100.0, abs=1.0)
+
+
+def test_non_contiguous_samples_are_refused_not_mistimed():
+    from glaxnimate_ai.cartoon.motion import Sample
+    from glaxnimate_ai.engine.session import SessionStore
+
+    s = SessionStore().create(width=300, height=200, frames=200)
+    gappy = [Sample(f, Vec2(float(f), 10)) for f in range(0, 100, 5)]  # every 5th
+    with pytest.raises(ValueError, match="contiguous"):
+        s._add_moving_prop("filing", gappy, name="gappy")

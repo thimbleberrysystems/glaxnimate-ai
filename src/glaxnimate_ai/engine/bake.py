@@ -88,19 +88,23 @@ class Scene:
 _LINEAR = (1.0 / 3.0, 2.0 / 3.0)
 
 
-def _write_scalar(prop, keys: list[ScalarKey], *, transitions: bool = True) -> int:
+def _write_scalar(prop, keys: list[ScalarKey], *, transitions: bool = True,
+                  offset: float = 0.0) -> int:
     """Write a reduced scalar channel; returns how many keys it cost.
 
     `transitions=False` writes plain linear keys. It exists because
     **`set_transition` on a scale property segfaults** in the bindings (an
     upstream bug — position and rotation are fine); scale channels ship linear
     keys and the reducer compensates with a few extra of them.
+
+    `offset` shifts every key: the reducer counts from 0 because it only sees a
+    list, so a clip that starts partway through the film says so here.
     """
     if len(keys) <= 1:
         prop.value = keys[0].value if keys else 0.0
         return 0
     for k in keys:
-        prop.set_keyframe(float(k.frame), k.value)
+        prop.set_keyframe(float(k.frame) + offset, k.value)
     if transitions:
         for k in keys[:-1]:
             if (k.cy1, k.cy2) == _LINEAR:
@@ -108,17 +112,18 @@ def _write_scalar(prop, keys: list[ScalarKey], *, transitions: bool = True) -> i
             tr = model.KeyframeTransition()
             tr.before = utils.Point(1.0 / 3.0, k.cy1)
             tr.after = utils.Point(2.0 / 3.0, k.cy2)
-            prop.set_transition(float(k.frame), tr)
+            prop.set_transition(float(k.frame) + offset, tr)
     return len(keys)
 
 
-def _write_point(prop, keys: list[PointKey], *, transitions: bool = True) -> int:
+def _write_point(prop, keys: list[PointKey], *, transitions: bool = True,
+                 offset: float = 0.0) -> int:
     if len(keys) <= 1:
         v = keys[0].value if keys else Vec2()
         prop.value = utils.Point(v.x, v.y)
         return 0
     for k in keys:
-        prop.set_keyframe(float(k.frame), utils.Point(k.value.x, k.value.y))
+        prop.set_keyframe(float(k.frame) + offset, utils.Point(k.value.x, k.value.y))
     if transitions:
         for k in keys[:-1]:
             if (k.cy1, k.cy2) == _LINEAR:
@@ -126,8 +131,32 @@ def _write_point(prop, keys: list[PointKey], *, transitions: bool = True) -> int
             tr = model.KeyframeTransition()
             tr.before = utils.Point(1.0 / 3.0, k.cy1)
             tr.after = utils.Point(2.0 / 3.0, k.cy2)
-            prop.set_transition(float(k.frame), tr)
+            prop.set_transition(float(k.frame) + offset, tr)
     return len(keys)
+
+
+def _clip_offset(samples) -> float:
+    """The frame a sample list actually starts on.
+
+    The reducer only ever sees a list of values, so its keys count from 0. That
+    is invisible while every `motion.*` generator starts at frame 0 -- index and
+    frame coincide and `Sample.frame` is decoration. The moment a clip starts
+    partway through a film (beat four of six), the index is a lie and the whole
+    clip silently plays at the top of the timeline. So the offset is read back
+    from the samples, and a list that is not one contiguous run is refused
+    rather than quietly mis-timed.
+    """
+    if not samples:
+        return 0.0
+    first = samples[0].frame
+    for i, smp in enumerate(samples):
+        if smp.frame != first + i:
+            raise ValueError(
+                f"samples must be one contiguous run of frames; samples[{i}].frame "
+                f"is {smp.frame}, expected {first + i}. Baking keys off the list "
+                f"index would put this clip on the wrong frames."
+            )
+    return float(first)
 
 
 # ----------------------------------------------------------------- skinning
@@ -297,14 +326,16 @@ def bake_samples(
     rot = [smp.angle for smp in samples]
     scl = [smp.scale for smp in samples]
 
-    n = _write_point(g.transform.position, reduce_point(pos, tol=TOL_PX))
-    n += _write_scalar(g.transform.rotation, reduce_scalar(rot, tol=TOL_DEG))
+    off = _clip_offset(samples)
+    n = _write_point(g.transform.position, reduce_point(pos, tol=TOL_PX), offset=off)
+    n += _write_scalar(g.transform.rotation, reduce_scalar(rot, tol=TOL_DEG),
+                       offset=off)
     # scale: linear keys only — set_transition on a scale property segfaults
     # in the bindings. The ease=False reducer adds keys until linear segments
     # are within tolerance instead.
     n += _write_point(g.transform.scale,
                       reduce_point(scl, tol=TOL_SCALE, ease=False),
-                      transitions=False)
+                      transitions=False, offset=off)
     if stats is not None:
         stats["keyframes"] = n
 
@@ -341,14 +372,15 @@ def bake_prop_samples(
     g = lay.add_shape("Group")
     draw_prop(g, prop_data, x=0.0, ground_y=0.0, scale=scale)
 
+    off = _clip_offset(samples)
     n = _write_point(g.transform.position, reduce_point([s.pos for s in samples],
-                                                        tol=TOL_PX))
+                                                        tol=TOL_PX), offset=off)
     n += _write_scalar(g.transform.rotation, reduce_scalar([s.angle for s in samples],
-                                                           tol=TOL_DEG))
+                                                           tol=TOL_DEG), offset=off)
     n += _write_point(g.transform.scale,
                       reduce_point([s.scale for s in samples], tol=TOL_SCALE,
                                    ease=False),
-                      transitions=False)
+                      transitions=False, offset=off)
     if stats is not None:
         stats["keyframes"] = n
     return lay

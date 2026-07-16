@@ -540,6 +540,49 @@ class Session:
             })
         return bake_samples(self.scene, samples, **kw)
 
+    def _shot(self, prefix: str, start: float, end: float, *, record: bool = True) -> str:
+        """Show a layer, and everything named under it, only during [start, end].
+
+        This is how one document holds several shots. There is no camera and no
+        cut — the timeline is continuous — so a "shot" is just visibility: name
+        a beat's layers `beat3.magnet`, `beat3.iron`, and gate the lot with
+        `shot("beat3", 336, 720)`.
+
+        It gates by name *prefix* rather than by layer, because a character is
+        not one layer: `bake_rig` writes a root plus one layer per bone, and
+        they are siblings that use `Layer.parent` for transforms only. Gating
+        the root alone leaves the entire skeleton on screen — measured, 4981
+        stray pixels of a man who should have left the shot.
+
+        Opacity keys are HOLD keys: a shot cuts, it does not dissolve.
+        """
+        from glaxnimate import model
+
+        want = [sh for sh in self.scene.comp.shapes
+                if sh.name == prefix or sh.name.startswith(prefix + ".")]
+        if not want:
+            names = sorted({sh.name.split(".")[0] for sh in self.scene.comp.shapes})
+            raise ValueError(f"no layers named {prefix!r} or {prefix!r}.*; have {names}")
+
+        keys: list[tuple[float, float]] = []
+        if start > 0:
+            keys.append((0.0, 0.0))
+        keys.append((float(start), 1.0))
+        if end < self.frames:
+            keys.append((float(end), 0.0))
+
+        for sh in want:
+            for f, v in keys:
+                sh.opacity.set_keyframe(f, v)
+                tr = model.KeyframeTransition()
+                tr.hold = True
+                sh.opacity.set_transition(f, tr)
+        if record:
+            self.doc.setdefault("shots", []).append(
+                {"prefix": prefix, "start": float(start), "end": float(end)}
+            )
+        return f"shot {prefix!r}: f{start:g}-{end:g} ({len(want)} layer(s))"
+
     def _add_moving_prop(self, prop, samples, *, name: str | None = None,
                          scale: float = 1.0, radius: float | None = None,
                          record: bool = True):
@@ -640,6 +683,7 @@ class Session:
             "scenery": self._scenery,
             "add_sound": self._add_sound,
             "add_moving_prop": self._add_moving_prop,
+            "shot": self._shot,
             "auto_sfx": self._auto_sfx,
             "music": self._music,
             "say": self._say,
@@ -712,6 +756,9 @@ class Session:
                 shape=ob.get("shape", "Ellipse"), size=size,
                 color=ob.get("color", "#e8543f"), layer_name=ob["name"],
             )
+        # after every layer exists, or a prefix would match nothing
+        for sh in doc.get("shots", []):
+            session._shot(sh["prefix"], sh["start"], sh["end"], record=False)
         for entry in (doc.get("audio") or {}).get("dialogue", []):
             if entry.get("bubble") and entry.get("character"):
                 ch = next((c for c in session.characters
