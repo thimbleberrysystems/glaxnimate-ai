@@ -347,7 +347,7 @@ def bake_prop_samples(
     prop_data: dict,
     samples,
     *,
-    scale: float = 1.0,
+    scale: float | tuple[float, float] = 1.0,
     layer_name: str = "prop_object",
     stats: dict | None = None,
 ) -> model.shapes.Layer:

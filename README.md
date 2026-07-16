@@ -107,7 +107,7 @@ centre.
 | **Bodies** | `human` / `biped`, `quadruped` (dog, cat, horse), extensible |
 | **Gaits** | `walk`, `run`, `trot`, `gallop`, `bound`, `hop` — one engine, a phase table per animal |
 | **Non-character motion** | `bounce`, `roll` (no-slip wheel), `spring`, `drift` (falling leaf), `sway` |
-| **Principles** | ease in/out, anticipation, overshoot, squash-and-stretch (area-preserving), arcs |
+| **Principles** | ease in/out, anticipation, overshoot, arcs (squash-and-stretch computes correctly but does not yet reach the render — see below) |
 | **Scenery** | sky, ground, house, school, tree, cloud, sun, parallax at any depth |
 | **Sound** | 9 synth SFX patches, foley derived from the motion, seeded chiptune music, neural-TTS dialogue with speech bubbles |
 | **Exports** | Lottie JSON, MP4 · WebM (both with the soundtrack muxed in), WebP, animated GIF, SVG, PNG spritesheet, `.rawr` |
@@ -116,6 +116,15 @@ Feet do not slip: legs are solved with inverse kinematics from a fixed foot
 target, so a planted foot is world-stationary *by construction*, and the linter
 verifies it rather than chasing it. One engine drives a walking man, a trotting
 dog and a bouncing ball with mathematically zero contact slip.
+
+> **Known bug: squash-and-stretch does not render.** `principles.squash_stretch`
+> computes the right numbers and `motion.bounce` asks for them, but they are
+> written to `transform.scale`, which **cannot be written through the Glaxnimate
+> bindings at all** — every type silently no-ops (measured: a ball whose maths
+> wants `scale.y=0.79` renders 80x80 on every frame). Props scale correctly
+> because `draw_prop` scales coordinates instead. The fix is to animate the
+> shape's `size` channel, which does work; until then a bouncing ball keeps a
+> rigid outline. See `docs/glaxnimate-api.md`.
 
 ---
 
@@ -237,7 +246,18 @@ The library is a perfectly good scriptable animation toolkit on its own:
 ```sh
 .venv/bin/python examples/walk_home_from_school.py
 .venv/bin/python examples/bouncing_ball.py
+.venv/bin/python examples/how_magnets_work.py   # a 71s narrated science explainer
 ```
+
+`how_magnets_work.py` is the other end of the range: no walk cycle, six shots on
+one timeline, and an explanation carried entirely by the narration — the bindings
+expose no text shape, so the film cannot draw a single label. It is also where
+`motion.attract` came from. The intuitive primitive for "two magnets snap
+together" was `spring()`, which is elastic: it pulls hardest when *far* away, so
+it lunges early and overshoots (measured: 112% of a 300px trip covered by frame
+5). Magnets do the opposite — nothing at range, then a violent last centimetre,
+then a clack. That late snatch is the whole effect, and it is `1/r^n`, not a
+spring.
 
 ---
 

@@ -126,7 +126,7 @@ def sun(layer, x: float, y: float, *, r: float = 46.0, color: str = "#ffd76e"):
 
 
 def draw_prop(layer, data: dict, *, x: float = 0.0, ground_y: float = 0.0,
-              scale: float = 1.0) -> None:
+              scale: float | tuple[float, float] = 1.0) -> None:
     """Interpret a declarative prop document (see `cartoon/assets.py`).
 
     Shapes are in local coordinates with the origin at the prop's *ground anchor*:
@@ -134,19 +134,27 @@ def draw_prop(layer, data: dict, *, x: float = 0.0, ground_y: float = 0.0,
     This is the path by which an LLM-authored prop — a JSON file, not code —
     reaches the canvas. The template functions above remain for parametric
     scenery; this exists so the vocabulary can grow without them.
+
+    `scale` takes `(sx, sy)` as well as one number, and it has to: a prop cannot
+    be stretched on one axis after the fact, because **`transform.scale` cannot
+    be written through these bindings at all** (see docs/glaxnimate-api.md — it
+    silently no-ops for every type). Scaling here multiplies the coordinates
+    before they reach Qt, which works. Cutting a 240x72 magnet into two 120x72
+    halves needs exactly this.
     """
+    sx, sy = (scale, scale) if isinstance(scale, (int, float)) else scale
     for sh in data["shapes"]:
         color = sh.get("color", "#888888")
         t = sh["type"]
         if t == "rect":
-            _rect(layer, x + sh["x"] * scale, ground_y + sh["y"] * scale,
-                  sh["w"] * scale, sh["h"] * scale, color,
-                  round_=sh.get("round", 0.0) * scale)
+            _rect(layer, x + sh["x"] * sx, ground_y + sh["y"] * sy,
+                  sh["w"] * sx, sh["h"] * sy, color,
+                  round_=sh.get("round", 0.0) * min(sx, sy))
         elif t == "ellipse":
-            _ellipse(layer, x + sh["cx"] * scale, ground_y + sh["cy"] * scale,
-                     sh["w"] * scale, sh["h"] * scale, color)
+            _ellipse(layer, x + sh["cx"] * sx, ground_y + sh["cy"] * sy,
+                     sh["w"] * sx, sh["h"] * sy, color)
         elif t == "polygon":
-            pts = [(x + px * scale, ground_y + py * scale) for px, py in sh["points"]]
+            pts = [(x + px * sx, ground_y + py * sy) for px, py in sh["points"]]
             _poly(layer, pts, color)
 
 

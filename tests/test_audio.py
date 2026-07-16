@@ -343,3 +343,36 @@ def test_missing_piper_package_teaches_before_the_download(tmp_path, monkeypatch
 
     with pytest.raises(ImportError, match=r"\[tts\]"):
         synthesize("hello")
+
+
+def test_sound_report_catches_two_voices_at_once(tts_stub):
+    """A peak meter is happy with two people talking over each other; a listener
+    is not. The model cannot hear it, so it has to be arithmetic."""
+    s = _session(
+        "man = human()\n"
+        "add_character(man, make_gait(man, 'walk', cycle_frames=24), x=90, name='man')\n"
+        "say('man', 'This line is quite a long one indeed', 0)\n"
+        "say('man', 'Interrupting rudely', 4)\n"
+    )
+    _, report = s.audio_mix()
+    assert "overlap" in report
+
+
+def test_sound_report_catches_a_line_running_past_the_end(tts_stub):
+    s = _session(
+        "man = human()\n"
+        "add_character(man, make_gait(man, 'walk', cycle_frames=24), x=90, name='man')\n"
+        "say('man', 'A line far too long to fit in this short scene at all', 40)\n"
+    )
+    _, report = s.audio_mix()
+    assert "past the last frame" in report
+
+
+def test_a_clean_soundtrack_reports_no_dialogue_faults(tts_stub):
+    s = _session(
+        "man = human()\n"
+        "add_character(man, make_gait(man, 'walk', cycle_frames=24), x=90, name='man')\n"
+        "say('man', 'Room to breathe', 2)\n"
+    )
+    _, report = s.audio_mix()
+    assert "overlap" not in report and "past the last frame" not in report

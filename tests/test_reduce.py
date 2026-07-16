@@ -258,3 +258,39 @@ def test_non_contiguous_samples_are_refused_not_mistimed():
     gappy = [Sample(f, Vec2(float(f), 10)) for f in range(0, 100, 5)]  # every 5th
     with pytest.raises(ValueError, match="contiguous"):
         s._add_moving_prop("filing", gappy, name="gappy")
+
+
+def test_props_scale_per_axis_at_draw_time():
+    """Cutting a 240x72 bar into two 120x72 halves needs a per-axis scale, and
+    `transform.scale` cannot deliver one: it is unwritable through these
+    bindings (silently, for every type — see docs/glaxnimate-api.md). Draw-time
+    scaling multiplies the coordinates before Qt sees them, so it works. This
+    pins the route we actually depend on.
+    """
+    from glaxnimate_ai.cartoon.motion import Sample
+    from glaxnimate_ai.engine.session import SessionStore
+    from glaxnimate_ai.feedback.render import render_frame
+
+    def bar_bbox(scale):
+        s = SessionStore().create(width=600, height=300, frames=4, ground_y=290)
+        smp = [Sample(f, Vec2(300, 150)) for f in range(5)]
+        s._add_moving_prop("bar_magnet", smp, name="bar", scale=scale)
+        im = render_frame(s.scene, 2).convert("RGB")
+        px = im.load()
+        xs, ys = [], []
+        for y in range(im.height):
+            for x in range(im.width):
+                r, g, b = px[x, y]
+                if r > 140 and b < 110 and g < 110:      # the red N half only
+                    xs.append(x)
+                    ys.append(y)
+        return max(xs) - min(xs) + 1, max(ys) - min(ys) + 1
+
+    w1, h1 = bar_bbox(1.0)
+    w2, h2 = bar_bbox((1.0, 2.0))       # twice as tall, same width
+    assert w2 == pytest.approx(w1, abs=2), "per-axis scale changed the width"
+    assert h2 == pytest.approx(h1 * 2, abs=3), "per-axis scale did not stretch y"
+
+    w3, h3 = bar_bbox(2.0)              # uniform still works
+    assert w3 == pytest.approx(w1 * 2, abs=3)
+    assert h3 == pytest.approx(h1 * 2, abs=3)

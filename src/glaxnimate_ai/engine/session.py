@@ -358,7 +358,41 @@ class Session:
         result = render_cues(cues, frames=self.frames, fps=self.scene.fps,
                              extra=extra)
         report = mix_report(cues, result, frames=self.frames, fps=self.scene.fps)
+        faults = self._dialogue_faults()
+        if faults:
+            report += "\n" + "\n".join(faults)
         return result, report
+
+    def _dialogue_faults(self) -> list[str]:
+        """Dialogue defects a peak meter cannot show.
+
+        Two lines at once is not loud, it is unintelligible — the mix report is
+        happy, the peak is fine, and the film is broken. Same for a line still
+        talking when the picture ends. Neither is audible to the model, and
+        neither shows up in dBFS, so they are checked as arithmetic here: the
+        lines' spans are known exactly, because TTS was rendered and measured
+        before it was ever cached.
+        """
+        fps = self.scene.fps
+        lines = sorted((e for e in (self.doc.get("audio") or {}).get("dialogue", [])),
+                       key=lambda e: e["frame"])
+        out: list[str] = []
+        for a, b in zip(lines, lines[1:], strict=False):
+            a_end = a["frame"] + a["dur"] * fps
+            if b["frame"] < a_end:
+                out.append(
+                    f"  ! two lines overlap by {a_end - b['frame']:.0f}f: "
+                    f"{a['text'][:28]!r} is still talking at f{b['frame']:g} when "
+                    f"{b['text'][:28]!r} starts"
+                )
+        for e in lines:
+            end = e["frame"] + e["dur"] * fps
+            if end > self.frames:
+                out.append(
+                    f"  ! {e['text'][:28]!r} runs {end - self.frames:.0f}f past the "
+                    f"last frame — it will be cut off mid-sentence"
+                )
+        return out
 
     def _music(self, seed: int = 0, *, bpm: float = 96, gain: float = 0.25) -> str:
         """A seeded chiptune underscore beneath the whole scene.
@@ -510,15 +544,22 @@ class Session:
             fn(lay, params.pop("x", 100.0), params.pop("y", 80.0), **params)
         return lay
 
-    def _add_prop(self, prop, *, x: float = 0.0, scale: float = 1.0,
+    def _add_prop(self, prop, *, x: float = 0.0, y: float | None = None,
+                  scale: float | tuple[float, float] = 1.0,
                   layer_name: str = "props"):
-        """Place a data prop (a dict or an asset name) on the ground line."""
+        """Place a data prop (a dict or an asset name) on the ground line.
+
+        `y` overrides the ground line for something that is not standing on it —
+        a diagram's slab, a sign on a wall. The prop's own origin still sits at
+        whatever y it lands on; only the default changes.
+        """
         from . import props as P
 
         data = assets.load_prop(prop) if isinstance(prop, str) else assets.prop_validate(prop)
+        anchor = self.ground_y if y is None else float(y)
         lay = self.scene.layer(layer_name)
-        P.draw_prop(lay, data, x=x, ground_y=self.ground_y, scale=scale)
-        self.doc["props"].append({"data": data, "x": x, "scale": scale,
+        P.draw_prop(lay, data, x=x, ground_y=anchor, scale=scale)
+        self.doc["props"].append({"data": data, "x": x, "y": y, "scale": scale,
                                   "layer": layer_name})
         return lay
 
@@ -584,8 +625,8 @@ class Session:
         return f"shot {prefix!r}: f{start:g}-{end:g} ({len(want)} layer(s))"
 
     def _add_moving_prop(self, prop, samples, *, name: str | None = None,
-                         scale: float = 1.0, radius: float | None = None,
-                         record: bool = True):
+                         scale: float | tuple[float, float] = 1.0,
+                         radius: float | None = None, record: bool = True):
         """Put a data prop (many shapes) on a motion path (`motion.*` samples).
 
         `add_prop` pins a prop to the ground; `add_object` moves a single shape.
@@ -729,8 +770,11 @@ class Session:
         for pr in doc["props"]:
             lay = session.scene.layer(pr.get("layer", "props"))
             from . import props as P
+            y = pr.get("y")
+            sc = pr.get("scale", 1.0)
             P.draw_prop(lay, pr["data"], x=pr["x"],
-                        ground_y=session.ground_y, scale=pr.get("scale", 1.0))
+                        ground_y=session.ground_y if y is None else float(y),
+                        scale=tuple(sc) if isinstance(sc, list) else sc)
         for rec in doc["characters"]:
             body = assets.body_from_data(rec["body"])
             pose_fn = SD.pose_lookup(rec["poses"])
@@ -745,8 +789,10 @@ class Session:
             from ..cartoon.geometry import Vec2
             smp = SD.samples_from_data(ob["samples"])
             if ob.get("prop"):
+                sc = ob.get("scale", 1.0)
                 session._add_moving_prop(
-                    ob["prop"], smp, name=ob["name"], scale=ob.get("scale", 1.0),
+                    ob["prop"], smp, name=ob["name"],
+                    scale=tuple(sc) if isinstance(sc, list) else sc,
                     radius=ob.get("radius"), record=False,
                 )
                 continue
