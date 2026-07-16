@@ -1,0 +1,14 @@
+{
+ "version": 1,
+ "kind": "prop",
+ "shapes": [
+  {
+   "type": "rect",
+   "x": -5,
+   "y": -1.2,
+   "w": 10,
+   "h": 2.4,
+   "color": "#3a3f4a"
+  }
+ ]
+}

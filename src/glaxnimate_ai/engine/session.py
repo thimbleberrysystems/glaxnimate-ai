@@ -540,6 +540,37 @@ class Session:
             })
         return bake_samples(self.scene, samples, **kw)
 
+    def _add_moving_prop(self, prop, samples, *, name: str | None = None,
+                         scale: float = 1.0, radius: float | None = None,
+                         record: bool = True):
+        """Put a data prop (many shapes) on a motion path (`motion.*` samples).
+
+        `add_prop` pins a prop to the ground; `add_object` moves a single shape.
+        A two-tone bar magnet, a paperclip, a compass needle — anything with more
+        than one shape that also moves — needs both, which is this.
+
+        It registers with the critic like `add_object` does, so a prop that flies
+        off-canvas is caught. `radius` is only the critic's idea of the prop's
+        size (bounds and ground checks); it does not affect drawing.
+        """
+        from .bake import bake_prop_samples
+
+        data = (assets.load_prop(prop) if isinstance(prop, str)
+                else assets.prop_validate(prop))
+        samples = list(samples)
+        name = name or f"prop{len(self.objects)}"
+        self.objects.append((name, samples, radius if radius is not None else 8.0))
+        if record:
+            self.doc["objects"].append({
+                "name": name,
+                "samples": SD.samples_to_data(samples),
+                "prop": data,          # <- the discriminator on replay
+                "scale": scale,
+                "radius": radius,
+            })
+        return bake_prop_samples(self.scene, data, samples, scale=scale,
+                                 layer_name=name)
+
     def _add_chaser(
         self,
         body: Body,
@@ -608,6 +639,7 @@ class Session:
             "set_expression": self._set_expression,
             "scenery": self._scenery,
             "add_sound": self._add_sound,
+            "add_moving_prop": self._add_moving_prop,
             "auto_sfx": self._auto_sfx,
             "music": self._music,
             "say": self._say,
@@ -667,6 +699,13 @@ class Session:
             ch.limb_pairs = [tuple(x) for x in rec.get("limbs", [])]
         for ob in doc["objects"]:
             from ..cartoon.geometry import Vec2
+            smp = SD.samples_from_data(ob["samples"])
+            if ob.get("prop"):
+                session._add_moving_prop(
+                    ob["prop"], smp, name=ob["name"], scale=ob.get("scale", 1.0),
+                    radius=ob.get("radius"), record=False,
+                )
+                continue
             size = Vec2(*ob["size"]) if ob.get("size") else None
             session._add_object(
                 SD.samples_from_data(ob["samples"]), record=False,

@@ -1,0 +1,22 @@
+{
+ "version": 1,
+ "kind": "prop",
+ "shapes": [
+  {
+   "type": "ellipse",
+   "cx": 0,
+   "cy": 0,
+   "w": 96,
+   "h": 96,
+   "color": "#cfd6e2"
+  },
+  {
+   "type": "ellipse",
+   "cx": 0,
+   "cy": 0,
+   "w": 84,
+   "h": 84,
+   "color": "#f7f9fc"
+  }
+ ]
+}

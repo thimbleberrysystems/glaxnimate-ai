@@ -1,0 +1,50 @@
+{
+ "version": 1,
+ "kind": "prop",
+ "shapes": [
+  {
+   "type": "polygon",
+   "points": [
+    [
+     0,
+     -4
+    ],
+    [
+     34,
+     0
+    ],
+    [
+     0,
+     4
+    ]
+   ],
+   "color": "#d94f3d"
+  },
+  {
+   "type": "polygon",
+   "points": [
+    [
+     0,
+     -4
+    ],
+    [
+     -34,
+     0
+    ],
+    [
+     0,
+     4
+    ]
+   ],
+   "color": "#e8eaee"
+  },
+  {
+   "type": "ellipse",
+   "cx": 0,
+   "cy": 0,
+   "w": 8,
+   "h": 8,
+   "color": "#3a3f4a"
+  }
+ ]
+}

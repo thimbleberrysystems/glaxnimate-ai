@@ -309,3 +309,46 @@ def bake_samples(
         stats["keyframes"] = n
 
     return lay
+
+
+def bake_prop_samples(
+    scene: Scene,
+    prop_data: dict,
+    samples,
+    *,
+    scale: float = 1.0,
+    layer_name: str = "prop_object",
+    stats: dict | None = None,
+) -> model.shapes.Layer:
+    """Bake a *multi-shape* prop onto a motion path.
+
+    `bake_samples` animates one ellipse; `add_prop` draws many shapes but nails
+    them to the ground. Anything made of more than one shape that also moves — a
+    two-tone bar magnet, a paperclip, a compass needle, a car — falls between
+    them, so it lands here.
+
+    The prop's shapes are drawn once into a group in LOCAL coordinates and the
+    group's transform carries the motion, which is the cut-out puppet trick the
+    bone baker already uses: N shapes cost one animated transform, not N. Local
+    origin is the prop's anchor, so `Sample.angle` rotates about it — author the
+    shapes around y=0 for a thing that spins about its middle (a needle), or
+    above it for a thing that pivots on the ground.
+    """
+    from .props import draw_prop
+
+    samples = list(samples)
+    lay = scene.layer(layer_name)
+    g = lay.add_shape("Group")
+    draw_prop(g, prop_data, x=0.0, ground_y=0.0, scale=scale)
+
+    n = _write_point(g.transform.position, reduce_point([s.pos for s in samples],
+                                                        tol=TOL_PX))
+    n += _write_scalar(g.transform.rotation, reduce_scalar([s.angle for s in samples],
+                                                           tol=TOL_DEG))
+    n += _write_point(g.transform.scale,
+                      reduce_point([s.scale for s in samples], tol=TOL_SCALE,
+                                   ease=False),
+                      transitions=False)
+    if stats is not None:
+        stats["keyframes"] = n
+    return lay
