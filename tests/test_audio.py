@@ -224,3 +224,39 @@ def test_exported_mp4_carries_the_soundtrack(tmp_path):
     assert has_audio_stream(final)
     scene_seconds = s.frames / s.scene.fps
     assert abs(audio_duration(final) - scene_seconds) < 0.5
+
+
+# ------------------------------------------------------------------- music
+def test_music_is_deterministic_per_seed():
+    from glaxnimate_ai.audio.music import render_music
+
+    a = render_music({"seed": 7}, duration_s=2.0)
+    b = render_music({"seed": 7}, duration_s=2.0)
+    c = render_music({"seed": 8}, duration_s=2.0)
+    assert np.array_equal(a, b)
+    assert not np.array_equal(a, c)
+    assert len(a) == int(2.0 * 44100)
+
+
+def test_music_spec_validation_teaches():
+    from glaxnimate_ai.audio.music import music_validate
+
+    with pytest.raises(ValueError, match="bpm"):
+        music_validate({"bpm": 500})
+    with pytest.raises(ValueError, match="gain"):
+        music_validate({"gain": 0})
+
+
+def test_music_joins_the_mix_and_persists():
+    from glaxnimate_ai.engine.session import Session
+
+    s = _session("add_sound('ding', 4)\nmusic(seed=3, bpm=110, gain=0.2)\n")
+    result, report = s.audio_mix()
+    # the bed fills the scene: well over half the samples are non-silent
+    active = float(np.mean(np.abs(result.buffer) > 1e-4))
+    assert active > 0.5, f"music bed covers only {active:.0%} of the timeline"
+
+    reborn = Session.replay(s.doc_id)
+    assert reborn.doc["audio"]["music"]["seed"] == 3
+    r2, _ = reborn.audio_mix()
+    assert np.array_equal(result.buffer, r2.buffer), "music must replay identically"

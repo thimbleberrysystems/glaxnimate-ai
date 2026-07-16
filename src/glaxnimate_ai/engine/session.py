@@ -360,9 +360,33 @@ class Session:
         report = mix_report(cues, result, frames=self.frames, fps=self.scene.fps)
         return result, report
 
+    def _music(self, seed: int = 0, *, bpm: float = 96, gain: float = 0.25) -> str:
+        """A seeded chiptune underscore beneath the whole scene.
+
+        Deterministic per seed — if it sounds naff, change the seed and listen
+        again; the spec is data in the scene doc like everything else. Keep the
+        gain low: it is a bed, not the show. music(seed=None) removes it.
+        """
+        from ..audio.music import music_validate
+
+        if seed is None:
+            self.doc["audio"]["music"] = None
+            return "music removed"
+        spec = music_validate({"seed": seed, "bpm": bpm, "gain": gain})
+        self.doc["audio"]["music"] = spec
+        return f"music: seed {spec['seed']}, {spec['bpm']:g} bpm, gain {spec['gain']:g}"
+
     def _extra_audio(self):
-        """Music beds and dialogue lines, rendered; extended by later phases."""
-        return []
+        """Music beds and dialogue lines, rendered onto the same bus as cues."""
+        extra = []
+        music = (self.doc.get("audio") or {}).get("music")
+        if music:
+            from ..audio.music import render_music
+
+            duration = self.frames / self.scene.fps
+            bed = render_music(music, duration_s=duration)
+            extra.append((0.0, bed, music.get("gain", 0.25), 0.0))
+        return extra
 
     @property
     def has_audio(self) -> bool:
@@ -500,6 +524,7 @@ class Session:
             "scenery": self._scenery,
             "add_sound": self._add_sound,
             "auto_sfx": self._auto_sfx,
+            "music": self._music,
             # the stage
             "add_character": self._add_character,
             "add_object": self._add_object,
