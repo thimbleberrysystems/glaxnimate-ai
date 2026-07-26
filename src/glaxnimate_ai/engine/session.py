@@ -1225,8 +1225,10 @@ class Session:
         """
         from .bake import bake_prop_samples
 
+        if isinstance(prop, list):        # accept a bare shapes list, like add_shape
+            prop = {"shapes": prop}
         data = (assets.load_prop(prop) if isinstance(prop, str)
-                else assets.prop_validate(prop))
+                else assets.prop_validate({"version": 1, "kind": "prop", **prop}))
         samples = list(samples)
         name = name or f"prop{len(self.objects)}"
         self.objects.append((name, samples, radius if radius is not None else 8.0))
