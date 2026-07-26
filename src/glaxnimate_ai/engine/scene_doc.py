@@ -55,6 +55,7 @@ def empty_doc(*, width: int, height: int, frames: int, fps: float,
         "canvas": {"width": width, "height": height, "frames": frames, "fps": fps},
         "ground_y": ground_y,
         "scenery": [], "props": [], "characters": [], "objects": [], "shots": [],
+        "effects": [],
         "audio": {"cues": [], "music": None, "dialogue": []},
     }
 
@@ -74,6 +75,7 @@ def load_doc(doc_id: str) -> dict:
         )
     doc = json.loads(p.read_text())
     doc.setdefault("audio", {"cues": [], "music": None, "dialogue": []})
+    doc.setdefault("effects", [])
     if doc.get("version") != VERSION:
         raise ValueError(
             f"scene {doc_id!r} has version {doc.get('version')!r}; "

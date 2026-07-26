@@ -90,19 +90,37 @@ def _png(img: Image.Image, max_px: int = 1024) -> MCPImage:
 
 
 # --------------------------------------------------------------------- build
+#: Social-format canvas presets. `preset` overrides width/height on new_document.
+_FORMATS = {
+    "landscape": (960, 540),   # 16:9 — YouTube, the default
+    "portrait": (540, 960),    # 9:16 — TikTok / Reels / Shorts
+    "square": (720, 720),      # 1:1 — feed posts
+    "sticker": (512, 512),     # Telegram tgs sticker
+}
+
+
 @mcp.tool()
 @qt_tool
 def new_document(
-    width: int = 960, height: int = 540, frames: int = 48, fps: float = 24.0
+    width: int = 960, height: int = 540, frames: int = 48, fps: float = 24.0,
+    preset: str | None = None,
 ) -> str:
     """Start a new animation. Returns a doc_id to pass to every other tool.
 
     `frames` is the length. At 24fps a walk cycle is ~24 frames, so 48 gives two.
-    The ground line defaults to 87% of the height.
+    The ground line defaults to 87% of the height. `preset` sets the canvas for a
+    platform and overrides width/height: portrait (9:16, TikTok/Shorts), square
+    (1:1), sticker (512, Telegram tgs), landscape (16:9, the default). For a
+    seamless short/sticker, make `frames` a whole motion cycle and check loop_report.
     """
+    if preset is not None:
+        if preset not in _FORMATS:
+            raise ValueError(f"unknown preset {preset!r}; have {sorted(_FORMATS)}")
+        width, height = _FORMATS[preset]
     s = store.create(width=width, height=height, frames=frames, fps=fps)
+    tag = f" [{preset}]" if preset else ""
     return (
-        f"{s.doc_id}: {width}x{height}, {frames} frames @ {fps}fps, "
+        f"{s.doc_id}: {width}x{height}{tag}, {frames} frames @ {fps}fps, "
         f"ground_y={s.ground_y:.0f}. Scenes autosave and survive restarts - "
         f"describe_scene(doc_id) shows what is in one."
     )
@@ -206,6 +224,16 @@ def describe_scene(doc_id: str) -> str:
     return SD.describe(s.doc)
 
 
+@mcp.tool()
+@qt_tool
+def loop_report(doc_id: str) -> str:
+    """Does it loop seamlessly? For a sticker or a short that plays on repeat, the
+    last frame should land back on the first. Reports each character's pose drift
+    between frame 0 and the final frame — near zero is a clean loop. Fix a jump by
+    making `frames` a whole motion cycle (a walk loops at exactly its cycle length)."""
+    return store.get(doc_id)._loop_report()
+
+
 # -------------------------------------------------------------------- sound
 @mcp.tool()
 @qt_tool
@@ -235,6 +263,79 @@ def add_sound(doc_id: str, sfx: str, frame: float,
     save_asset — author a patch, save it, cue it by name.
     """
     return store.get(doc_id)._add_sound(sfx, frame, gain=gain, pan=pan)
+
+
+@mcp.tool()
+@qt_tool
+def auto_fx(doc_id: str) -> str:
+    """The visual-juice pass: spawn effects FROM the motion — the picture twin of
+    auto_sfx. Zero guessing.
+
+    The same Timeline events that drive foley — foot plants, ball-ground hits, jump
+    launches and landings — spawn dust puffs, impact flashes and speed lines, on the
+    exact frames, at the right screen positions. So a landing gets its thud AND its
+    dust from one event. Defaults: plant→dust, hit→impact, launch→speed_lines,
+    land→dust. Run it AFTER the motion lints clean; for overrides or contact-frame
+    hits (a punch landing), use add_effect / auto_fx({...}) inside run_script.
+    """
+    return store.get(doc_id)._auto_fx()
+
+
+@mcp.tool()
+@qt_tool
+def add_effect(doc_id: str, fx: str, x: float, y: float, frame: float) -> str:
+    """Place one visual effect by hand (auto_fx covers motion-driven ones).
+
+    `fx` is a builtin (impact, dust, speed_lines, spark) or a saved fx asset name.
+    The effect pops in on `frame` at (x, y) — screen coords, y down — then grows and
+    fades over its lifespan. Put an `impact` on a strike's contact frame (beats land
+    ~60% through) with a hit sfx on the same frame. New effects are fx assets: shapes
+    plus a grow/fade envelope, saved via save_asset.
+    """
+    return store.get(doc_id)._add_effect(fx, x, y, frame)
+
+
+@mcp.tool()
+@qt_tool
+def impact_camera(doc_id: str, frame: float, x: float | None = None,
+                  y: float | None = None, zoom: float = 1.2,
+                  shake: float = 9.0) -> str:
+    """Sell a hit: a fast camera punch-in toward (x, y) plus a decaying screen shake,
+    both on the contact `frame`. Fire it on the SAME frame as the impact flash, the
+    hit sfx and the beat's hitstop and the whole blow lands as one moment — this is
+    the single biggest 'it feels like it connected' lever. Returns to neutral after.
+
+    Call it AFTER the scene is built (it re-parents all content under a camera layer)
+    and after any shot() gating. Deterministic — replays identically."""
+    return store.get(doc_id)._impact_camera(frame, x, y, zoom=zoom, shake=shake)
+
+
+@mcp.tool()
+@qt_tool
+def camera_move(doc_id: str, start: float, end: float, zoom: float = 1.0,
+                focus_x: float | None = None, focus_y: float | None = None) -> str:
+    """A held camera move for staging: ease from neutral framing to `zoom` centred on
+    (focus_x, focus_y) between `start` and `end`. zoom>1 pushes in; zoom=1 with a
+    focus pans. Call after the scene is built (re-parents content under the camera)."""
+    return store.get(doc_id)._camera_move(start, end, zoom=zoom,
+                                          focus_x=focus_x, focus_y=focus_y)
+
+
+@mcp.tool()
+@qt_tool
+def clash(doc_id: str, frame: float, x: float, y: float,
+          sfx: str = "splat", fx: str = "impact", zoom: float = 1.3,
+          shake: float = 10.0) -> str:
+    """The 'it connected' bundle on one contact frame: impact flash + hit sfx + camera
+    punch-in and shake, in a single call. Use it for the moment two figures meet.
+
+    The poses are composed in run_script: bake the attacker with a hitstopped strike
+    (actions.hitstop(actions.punch(...), at=<contact>)), bake the defender with
+    actions.sequence((actions.idle(...), <contact>), (actions.knockback(...), ...)),
+    then clash() on the contact frame. For a wielded weapon or a thrown object, use
+    wield()/throw() inside run_script (they need a prop and exact coordinates)."""
+    return store.get(doc_id)._clash(frame, x, y, sfx=sfx or None, fx=fx or None,
+                                    zoom=zoom, shake=shake)
 
 
 @mcp.tool()
@@ -487,7 +588,14 @@ Screen coords: +x right, +y DOWN. "Up" is negative y. Ground is a y value.
 BODIES (rigs). A human is one preset among many; the engine animates anything.
   human() / biped(thigh=, shin=, spine=, arm=, forearm=, head=)  -> Body
   quadruped(upper=, lower=, body=, neck=, head=, tail=)          -> Body  (dog/cat/horse)
+  stick(ink=, weight=, head_d=)                                  -> Body  (line-art figure)
   body.hip_height, body.leg_length
+
+LINE-ART (the stick-figure look -- STYLE, not species):
+  stick() is biped() drawn as uniform pen strokes with a ring head.
+  lineart(body) reskins ANY body the same way -- lineart(quadruped()) is a stick dog.
+  Or add_character(body, gait, style="lineart") to stroke it at bake time.
+  The look lives in the body's parts, so it saves and replays like any other skin.
 
 THE ASSET LIBRARY (data, not code -- this is how the vocabulary GROWS):
   load_body("bird") -> Body            a creature saved as JSON
@@ -513,11 +621,18 @@ every creature.
     character must ARRIVE somewhere — a door, a mark, another character.
 
 FACES (swappable expressions on a slot; stepped, like cut-out animation)
-  add_character(..., face="human")     mount a face asset (human, dog, or yours)
+  add_character(..., face="stick")     mount a face asset (stick, human, dog, yours)
   set_expression(char_or_name, "happy", frame)   hold-swap at that frame
+  stick face: neutral, happy, sad, surprised, blink, angry, determined (+ say_*).
   human face: neutral, happy, sad, surprised, blink.  dog: normal, happy.
   New faces are face.json assets: attachments of prop-schema shapes, authored
   screen-aligned around the slot point (x = facing, y = down).
+
+VOICE-OVER (local neural TTS, cached in the project; the model can't hear, so
+placement and lip-sync are arithmetic, not guesswork)
+  say(char, "line", frame)   speaks + a speech bubble; auto lip-sync flaps the
+     mouth from the audio's own RMS envelope when the face has say_* mouths (the
+     stick face does). say(..., lipsync=False) to hold the mouth still.
 
 SCENERY (backdrops, from scripts)
   scenery("sky") / scenery("ground") / scenery("house", x=520)
@@ -548,6 +663,57 @@ you hand to add_action(body, pose_fn, name="..."):
      base->tip. Silent when the character is still, whips when it darts.
   actions.sequence((action1, frames1), (action2, frames2), ...)  # beats in a row
 
+COMBAT / STUNT beats (a stick figure that fights, not just walks). facing=+1 faces
+right, -1 left. Each is anticipation -> fast strike -> settle; the blow lands ~60%
+through, so put an fx/sfx cue there. String them with actions.sequence:
+  actions.punch(body, ground_y=, x=, facing=1, frames=16)    # straight jab
+  actions.kick(body, ground_y=, x=, facing=1, frames=18)     # front kick, foot snaps out
+  actions.dash(body, ground_y=, x0=, x1=, frames=14)         # explosive lunge across
+  actions.flip(body, ground_y=, x=, distance=90, height=150, facing=1, frames=26)
+  actions.swing(body, ground_y=, x=, facing=1, frames=18)    # overhead sword/club arc
+  actions.block(body, ground_y=, x=, facing=1, frames=12)    # guard up (caught, not hit)
+  actions.knockback(body, ground_y=, x=, facing=1, distance=70, frames=16)  # take a hit
+  actions.land(body, ground_y=, x=, frames=14)               # hero crouch landing
+  actions.line_of_action(pose_fn, body, curve=1.0)  # exaggerate the pose's read
+
+SNAP TIMING (snappy beats weigh more than floaty ones; the viral tell):
+  actions.hitstop(pose_fn, at=<contact frame>, freeze=3)  # freeze on impact for
+     weight; adds `freeze` frames -> bake/add_action over original length + freeze.
+  actions.hold(pose_fn, at, frames)      # a moving hold: stop dead, then resume
+  actions.retime(pose_fn, span, ease)    # re-time a beat: ease=principles.ease_in
+     (snappy, sits then bursts) or ease_out (floaty). Same length, new spacing.
+  principles.hold_snap(t, hold=0.4)      # a "sit still then snap" easing curve
+
+EFFECTS (the visual juice: dust, impact flashes, speed lines, sparks)
+  auto_fx()               spawn effects FROM motion (twin of auto_sfx): foot
+     plants->dust, ground hits->impact, jump launch->speed_lines, land->dust.
+     Same events as the foley pass; run after the motion lints clean.
+  add_effect(fx, x, y, frame)   place one by hand. builtins: impact, dust,
+     speed_lines, spark. Put an impact on a strike's contact frame (~60% through)
+     with a hit sfx there and hitstop on the beat -> the whole hit lands on one frame.
+  New effects are fx assets (save_asset(\"fx\",...)): prop-schema shapes + an
+  envelope {lifespan, grow:[from,to], fade, spin}. Grows via real transform.scale.
+
+CAMERA (call LAST — after the scene is built and after any shot() gating; it
+re-parents all content under one camera layer whose transform is the camera):
+  impact_camera(frame, x, y, zoom=1.2, shake=9)  # SELL THE HIT: fast punch-in
+     toward (x,y) + a decaying shake on the contact frame. Fire it on the SAME
+     frame as the impact flash + hit sfx + the beat's hitstop -> one big moment.
+  camera_move(start, end, zoom=1, focus_x, focus_y)  # held push-in or pan for
+     staging. zoom>1 pushes in; zoom=1 with a focus pans. Returns to neutral.
+
+TWO FIGURES & PROPS-AS-TOYS (fights, hand-offs, using the world):
+  A two-figure hit is composed from beats you already have:
+    add_action(a, actions.hitstop(actions.punch(a, ground_y=ground, x=150), at=10), name=\"a\")
+    add_action(b, actions.sequence((actions.idle(b, ground_y=ground, x=250), 10),
+                                   (actions.knockback(b, ground_y=ground, x=250,
+                                                      facing=-1), 14)), name=\"b\")
+    clash(10, x=250, y=120)   # impact flash + hit sfx + camera punch-in, one call
+  wield(char, prop, bone=\"arm_lower\")   # a prop rides the hand: a sword on a swing,
+     a torch on a walk. prop is a name or an inline {shapes:[...]} dict.
+  throw(prop, x0=, y0=, x1=, y1=, apex=120, release=, spin=360)  # let it go: a
+     ballistic arc, invisible until the release frame. The AvA move: use the world.
+
 MOTION (things without legs; no rig needed)
   motion.bounce(x0=, x1=, ground_y=, apex=, frames=, bounces=5, restitution=.62, radius=40)
   motion.roll(x0=, x1=, y=, radius=, frames=)      # wheel: spin locked to travel
@@ -572,6 +738,15 @@ AUDIO (sound is data on the same doc; exports mux it into mp4/webm)
      builtins: boing thud step pop whoosh slide_up slide_down splat ding
      new sounds = sfx assets: JSON synth patches (see save_asset), cued by name
   music(seed=7, bpm=104, gain=0.2)   seeded chiptune bed; bad? change the seed.
+
+BEAT SYNC & FORMAT (make it land on the beat and fit the platform):
+  beats(division=1)          the frames the music beat lands on (2=eighths, 4=16ths).
+  snap_to_beat(frame)        round a frame onto the grid — put a cut/clash on a beat.
+     A montage feels deliberate when cuts and hits sit on beats(): after music(),
+     place clash()/shot()/add_effect on a frame from beats() or snap_to_beat().
+  new_document(preset=\"portrait\")  9:16 for TikTok/Shorts (also square, sticker).
+  loop_report()   for a looping short/sticker: is frame 0 == the last frame? Make
+     `frames` a whole motion cycle so a walk loops seamlessly.
      music(seed=None) removes it. Keep gain low - it is a bed, not the show.
   say("man", "Hello!", frame)        neural TTS + speech bubble for the line's
      duration. Cached to the project; replays without the TTS installed.

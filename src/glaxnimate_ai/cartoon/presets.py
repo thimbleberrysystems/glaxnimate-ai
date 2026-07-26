@@ -11,7 +11,7 @@ walk *and* a correct diagonal trot without either knowing about the other.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from .gait import (
     GAIT_DEFAULTS,
@@ -25,7 +25,8 @@ from .gait import (
 from .geometry import Vec2
 from .rig import Joint, Pose, Rig
 
-__all__ = ["Body", "Part", "biped", "human", "quadruped", "make_gait", "pace"]
+__all__ = ["Body", "Part", "biped", "human", "quadruped", "stick", "lineart",
+           "make_gait", "pace"]
 
 
 @dataclass(slots=True)
@@ -46,6 +47,13 @@ class Part:
     tip: float = 0.0
     #: Painting order. Low numbers go behind, so a far arm sits under the torso.
     z: int = 0
+    #: Draw the bone as an open-path *stroke* (a pen line) instead of a filled
+    #: capsule. This is the stick-figure look: `width` becomes the stroke weight.
+    stroke: bool = False
+    #: How a `head` renders under `stroke`: an outline "ring", a solid "dot", or a
+    #: "fill" (a filled ellipse, the classic capsule-mode head). Ignored when the
+    #: part has no `head`.
+    head_style: str = "ring"
 
 
 @dataclass(slots=True)
@@ -146,6 +154,37 @@ def biped(
 
 def human(**kw) -> Body:
     return biped(**kw)
+
+
+def lineart(body: Body, *, ink: str = "#1a1a1a", weight: float = 7.0,
+            head_d: float = 42.0) -> Body:
+    """Reskin *any* body as a line-art stick figure: uniform pen strokes in one ink,
+    heads as rings. Style, not species — a dog or a bird reskins the same way.
+
+    The reskin lives in the body's `parts`, not in a draw-time flag, so the
+    stick-ness serialises with the asset and replays from the scene document for
+    free (content is data). A `head` part keeps its ellipse but becomes a hollow
+    ring sized to `head_d`; every other bone becomes a stroke of `weight`. The bone
+    draw order already paints far limbs behind near ones, so a single flat ink stays
+    legible without depth shading — which is exactly what reads as "stick figure"
+    rather than "thin person".
+    """
+    parts: dict[str, Part] = {}
+    for name in body.bones:
+        old = body.parts.get(name, Part())
+        if old.head:
+            parts[name] = Part(width=weight, color=ink, stroke=True,
+                               head=(head_d, head_d), head_style="ring")
+        else:
+            parts[name] = Part(width=weight, color=ink, stroke=True, tip=old.tip)
+    return replace(body, parts=parts)
+
+
+def stick(*, ink: str = "#1a1a1a", weight: float = 7.0, head_d: float = 42.0,
+          **kw) -> Body:
+    """The canonical stick figure: `biped()` drawn as line-art. A first-class preset
+    for the flagship look; `lineart()` applies the same treatment to any body."""
+    return lineart(biped(**kw), ink=ink, weight=weight, head_d=head_d)
 
 
 def quadruped(

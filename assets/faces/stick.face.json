@@ -1,0 +1,259 @@
+{
+ "version": 1,
+ "kind": "face",
+ "slot": "face",
+ "attachments": {
+  "neutral": [
+   {
+    "type": "ellipse",
+    "cx": 6,
+    "cy": -8,
+    "w": 5,
+    "h": 5,
+    "color": "#1a1a1a"
+   },
+   {
+    "type": "rect",
+    "x": 1,
+    "y": 7,
+    "w": 9,
+    "h": 2.2,
+    "color": "#1a1a1a"
+   }
+  ],
+  "happy": [
+   {
+    "type": "ellipse",
+    "cx": 6,
+    "cy": -8,
+    "w": 5,
+    "h": 5,
+    "color": "#1a1a1a"
+   },
+   {
+    "type": "polygon",
+    "points": [
+     [
+      0,
+      5
+     ],
+     [
+      5,
+      11
+     ],
+     [
+      12,
+      5
+     ],
+     [
+      5,
+      14
+     ]
+    ],
+    "color": "#1a1a1a"
+   }
+  ],
+  "sad": [
+   {
+    "type": "ellipse",
+    "cx": 6,
+    "cy": -8,
+    "w": 5,
+    "h": 5,
+    "color": "#1a1a1a"
+   },
+   {
+    "type": "polygon",
+    "points": [
+     [
+      0,
+      12
+     ],
+     [
+      5,
+      6
+     ],
+     [
+      12,
+      12
+     ],
+     [
+      5,
+      9
+     ]
+    ],
+    "color": "#1a1a1a"
+   }
+  ],
+  "surprised": [
+   {
+    "type": "ellipse",
+    "cx": 6,
+    "cy": -9,
+    "w": 6,
+    "h": 6,
+    "color": "#1a1a1a"
+   },
+   {
+    "type": "ellipse",
+    "cx": 6,
+    "cy": 8,
+    "w": 7,
+    "h": 9,
+    "color": "#1a1a1a"
+   }
+  ],
+  "blink": [
+   {
+    "type": "rect",
+    "x": 2,
+    "y": -9,
+    "w": 8,
+    "h": 2,
+    "color": "#1a1a1a"
+   },
+   {
+    "type": "rect",
+    "x": 1,
+    "y": 7,
+    "w": 9,
+    "h": 2.2,
+    "color": "#1a1a1a"
+   }
+  ],
+  "angry": [
+   {
+    "type": "polygon",
+    "points": [
+     [
+      1,
+      -13
+     ],
+     [
+      11,
+      -9
+     ],
+     [
+      11,
+      -7
+     ],
+     [
+      1,
+      -11
+     ]
+    ],
+    "color": "#1a1a1a"
+   },
+   {
+    "type": "ellipse",
+    "cx": 6,
+    "cy": -8,
+    "w": 5,
+    "h": 5,
+    "color": "#1a1a1a"
+   },
+   {
+    "type": "rect",
+    "x": 1,
+    "y": 8,
+    "w": 9,
+    "h": 2.2,
+    "color": "#1a1a1a"
+   }
+  ],
+  "determined": [
+   {
+    "type": "polygon",
+    "points": [
+     [
+      1,
+      -12
+     ],
+     [
+      11,
+      -11
+     ],
+     [
+      11,
+      -9
+     ],
+     [
+      1,
+      -10
+     ]
+    ],
+    "color": "#1a1a1a"
+   },
+   {
+    "type": "ellipse",
+    "cx": 6,
+    "cy": -8,
+    "w": 5,
+    "h": 5,
+    "color": "#1a1a1a"
+   },
+   {
+    "type": "rect",
+    "x": 2,
+    "y": 8,
+    "w": 8,
+    "h": 2.4,
+    "color": "#1a1a1a"
+   }
+  ],
+  "say_closed": [
+   {
+    "type": "ellipse",
+    "cx": 6,
+    "cy": -8,
+    "w": 5,
+    "h": 5,
+    "color": "#1a1a1a"
+   },
+   {
+    "type": "rect",
+    "x": 1,
+    "y": 7,
+    "w": 9,
+    "h": 2.0,
+    "color": "#1a1a1a"
+   }
+  ],
+  "say_mid": [
+   {
+    "type": "ellipse",
+    "cx": 6,
+    "cy": -8,
+    "w": 5,
+    "h": 5,
+    "color": "#1a1a1a"
+   },
+   {
+    "type": "ellipse",
+    "cx": 6,
+    "cy": 8,
+    "w": 6,
+    "h": 4,
+    "color": "#1a1a1a"
+   }
+  ],
+  "say_open": [
+   {
+    "type": "ellipse",
+    "cx": 6,
+    "cy": -8,
+    "w": 5,
+    "h": 5,
+    "color": "#1a1a1a"
+   },
+   {
+    "type": "ellipse",
+    "cx": 6,
+    "cy": 8,
+    "w": 7,
+    "h": 9,
+    "color": "#1a1a1a"
+   }
+  ]
+ }
+}

@@ -19,6 +19,7 @@ check its feet without being told twice.
 from __future__ import annotations
 
 import io
+import math
 import sys
 import time
 import traceback
@@ -30,7 +31,7 @@ from glaxnimate import environment
 
 from ..cartoon import actions, assets, geometry, motion, presets, principles, rig
 from ..cartoon.gait import Gait, pose_at
-from ..cartoon.presets import Body
+from ..cartoon.presets import Body, lineart
 from . import scene_doc as SD
 from .bake import Scene, bake_rig, bake_samples
 
@@ -51,6 +52,8 @@ class Character:
     limb_pairs: list = field(default_factory=list)
     #: attachment name -> its layer, when the character has a face.
     face_layers: dict = field(default_factory=dict)
+    #: bone/joint name -> its baked layer, so props can be parented to a hand.
+    bone_layers: dict = field(default_factory=dict)
     #: the attachment visible from frame 0.
     face_default: str = ""
     #: (frame, attachment) history, for inspection and (later) the scene doc.
@@ -88,6 +91,12 @@ class Session:
     characters: list[Character] = field(default_factory=list)
     #: (name, samples, radius) for every non-rig object, so the critic sees them.
     objects: list[tuple] = field(default_factory=list)
+    #: Baked effect layers placed by auto_fx, so a re-run can hide them (baked Qt
+    #: layers cannot be removed cleanly; opacity 0 is the honest clear).
+    fx_layers: list = field(default_factory=list)
+    #: The world/camera container layer; content re-parents under it so its
+    #: transform acts as a camera. Created lazily on the first camera call.
+    camera_layer: object = None
     #: The scene as data — everything needed to rebuild this session from disk.
     doc: dict = field(default_factory=dict)
 
@@ -118,6 +127,7 @@ class Session:
         name: str = "character",
         color: str | None = None,
         thickness: float | None = None,
+        style: str | None = None,
         face: str | dict | None = None,
     ) -> Character:
         """Bake a rig into the document and register it with the critic.
@@ -125,7 +135,13 @@ class Session:
         `color`/`thickness` default to None so the body's own skin is used. Pass
         them to flatten the character to a single colour — useful for a silhouette
         check, useless for a cartoon.
+
+        `style="lineart"` reskins the body as a stick figure before baking, so any
+        creature — not just `stick()` — can be drawn as line art, and the look
+        serialises into the scene document (it lives in the body's parts).
         """
+        if style == "lineart":
+            body = lineart(body)
 
         def pose_fn(t: float):
             # No hip_height here on purpose: pose_at reads the gait's own
@@ -152,7 +168,8 @@ class Session:
             color=color, thickness=thickness, layer_name=name, layers_out=layers,
         )
         limb_pairs = [(li.upper, li.lower) for li in gait.limbs] if gait else []
-        ch = Character(name, body, gait, pose_fn, limb_pairs=limb_pairs)
+        ch = Character(name, body, gait, pose_fn, limb_pairs=limb_pairs,
+                       bone_layers=dict(layers))
 
         if face_data is None and face is not None:
             face_data = (assets.load_face(face) if isinstance(face, str)
@@ -272,16 +289,22 @@ class Session:
         name: str = "character",
         color: str | None = None,
         thickness: float | None = None,
+        style: str | None = None,
+        face: str | dict | None = None,
         first: int = 0,
     ) -> Character:
-        """Bake a character driven by an arbitrary pose function (a jump, a wave).
+        """Bake a character driven by an arbitrary pose function (a jump, a punch).
 
         Actions aren't locomotion, so there is no gait — but the character is still
         registered so the linter and diagnostics can inspect it (contact slip,
-        joint integrity, bounds all still apply).
+        joint integrity, bounds all still apply). `style="lineart"` reskins as a
+        stick figure, `face=` mounts a face, exactly as `add_character` does.
         """
+        if style == "lineart":
+            body = lineart(body)
         return self._bake_character(body, pose_fn, gait=None, name=name,
-                                    color=color, thickness=thickness, first=first)
+                                    color=color, thickness=thickness, face=face,
+                                    first=first)
 
     # ------------------------------------------------------------------ audio
     def _add_sound(self, sfx, frame: float, *, gain: float = 1.0,
@@ -348,6 +371,85 @@ class Session:
         summary = ", ".join(f"{v} {k}" for k, v in sorted(kinds.items()))
         return f"placed {placed} cue(s) from motion ({summary or 'no events found'})"
 
+    # ----------------------------------------------------------------- effects
+    def _add_effect(self, fx, x: float, y: float, frame: float, *,
+                    layer_name: str | None = None, record: bool = True) -> str:
+        """Bake one visual effect at (x, y), popping in on `frame`.
+
+        `fx` is a builtin name (impact, dust, speed_lines, spark), an inline fx
+        document, or a saved fx asset dict. Effects are short-lived: they grow, fade
+        and vanish, costing nothing on every other frame.
+        """
+        from ..cartoon.effects import resolve_fx
+        from .bake import bake_effect
+
+        data = resolve_fx(fx)
+        lname = layer_name or f"fx.{len(self.doc['effects'])}"
+        bake_effect(self.scene, data, x=float(x), y=float(y), start=float(frame),
+                    layer_name=lname)
+        if record:
+            self.doc["effects"].append({
+                "fx": fx if isinstance(fx, str) else data,
+                "x": float(x), "y": float(y), "frame": float(frame), "layer": lname,
+            })
+        label = fx if isinstance(fx, str) else "inline fx"
+        return f"effect {label} at ({x:g}, {y:g}) f{frame:g}"
+
+    #: what auto_fx spawns for each motion event; override per call
+    _FX_MAP = {"plant": "dust", "hit": "impact", "launch": "speed_lines",
+               "land": "dust"}
+
+    def _auto_fx(self, mapping: dict | None = None, *, clear: bool = True) -> str:
+        """Place visual effects from the motion itself — the picture twin of auto_sfx.
+
+        The SAME Timeline events that foley reads — foot plants, ground hits, jump
+        launches and landings — spawn dust, impact flashes and speed lines, on the
+        same frames and at the same screen positions. One derivation, two channels:
+        a landing gets its thud *and* its dust from the same event. Map a kind to
+        None to skip it: auto_fx({"plant": None}).
+        """
+        from ..audio import events as EV
+        from ..cartoon import timeline as tlmod
+        from ..cartoon.effects import resolve_fx
+        from .bake import bake_effect
+
+        fx_map = {**self._FX_MAP, **(mapping or {})}
+        found: list[EV.MotionEvent] = []
+        for ch in self.characters:
+            tl = tlmod.from_pose_fn(ch.body, ch.pose_fn, frames=self.frames)
+            found += EV.plant_onsets(tl, ground_y=self.ground_y)
+            found += EV.airborne_spans(tl, ground_y=self.ground_y)
+        for name, samples, radius in self.objects:
+            found += EV.object_hits(samples, radius=radius,
+                                    ground_y=self.ground_y, name=name)
+
+        if clear:  # hide prior auto layers (baked layers can't be removed) + drop records
+            for lay in self.fx_layers:
+                lay.opacity.clear_keyframes()
+                lay.opacity.value = 0.0
+            self.fx_layers = []
+            self.doc["effects"] = [e for e in self.doc["effects"] if not e.get("auto")]
+
+        placed = 0
+        for ev in sorted(found, key=lambda e: e.frame):
+            name = fx_map.get(ev.kind)
+            if name is None:
+                continue
+            lname = f"fx.auto.{ev.kind}.{placed}"
+            lay = bake_effect(self.scene, resolve_fx(name), x=ev.x,
+                              y=self.ground_y, start=float(ev.frame), layer_name=lname)
+            self.fx_layers.append(lay)
+            self.doc["effects"].append({
+                "fx": name, "x": ev.x, "y": self.ground_y, "frame": float(ev.frame),
+                "layer": lname, "auto": True, "event": ev.kind,
+            })
+            placed += 1
+        kinds: dict[str, int] = {}
+        for ev in found:
+            kinds[ev.kind] = kinds.get(ev.kind, 0) + 1
+        summary = ", ".join(f"{v} {k}" for k, v in sorted(kinds.items()))
+        return f"placed {placed} effect(s) from motion ({summary or 'no events found'})"
+
     def audio_mix(self):
         """Render the scene's cue sheet to a stereo buffer + report. Used by the
         export path and the sound_report tool."""
@@ -411,13 +513,69 @@ class Session:
         self.doc["audio"]["music"] = spec
         return f"music: seed {spec['seed']}, {spec['bpm']:g} bpm, gain {spec['gain']:g}"
 
+    # -------------------------------------------------- rhythm & social format
+    def _tempo(self, bpm: float | None) -> float:
+        b = bpm if bpm is not None else (self.doc.get("audio") or {}).get("music", {})
+        b = b.get("bpm") if isinstance(b, dict) else b
+        if not b:
+            raise ValueError("no tempo yet — pass bpm= or call music(bpm=...) first")
+        return float(b)
+
+    def _beats(self, division: int = 1, *, bpm: float | None = None) -> list[int]:
+        """The frames the beat lands on, so cuts/hits/effects can snap to the music.
+
+        The inverse of auto_sfx: that puts sound on the motion, this puts motion on
+        the beat. `division` 1=quarters, 2=eighths, 4=sixteenths. Uses the scene's
+        music() bpm unless you pass one."""
+        from ..cartoon.rhythm import beat_frames
+
+        return beat_frames(self._tempo(bpm), self.scene.fps, self.frames,
+                           division=division)
+
+    def _snap_to_beat(self, frame: float, division: int = 1, *,
+                      bpm: float | None = None) -> int:
+        """Round a frame to the nearest beat — drop a cut or a clash onto the grid."""
+        from ..cartoon.rhythm import snap_to_beat
+
+        return snap_to_beat(frame, self._tempo(bpm), self.scene.fps, division=division)
+
+    def _loop_report(self) -> str:
+        """Does the animation loop seamlessly? Reports how far each character's pose
+        drifts between the first frame and the last — a seamless loop (for a sticker
+        or a short) wants that near zero. A walk baked to exactly its cycle loops; an
+        odd number of frames usually does not."""
+        if not self.characters:
+            return "loop: no characters to check"
+        lines = []
+        worst = 0.0
+        for ch in self.characters:
+            a = ch.body.rig.solve(ch.pose_fn(0.0))
+            b = ch.body.rig.solve(ch.pose_fn(float(self.frames)))
+            root = ch.body.rig.root_name
+            ra, rb = a[root].origin, b[root].origin
+            # pose drift relative to the root: does the *cycle* repeat? (a forward
+            # walk translates but its limbs still loop — that is what we score.)
+            drift = max((a[j].tip - ra).distance_to(b[j].tip - rb) for j in a)
+            travel = ra.distance_to(rb)
+            note = "seamless" if drift < 4 else f"cycle jumps {drift:.0f}px"
+            if travel > 4:
+                note += f" (travels {travel:.0f}px — loops in place, scrolls on screen)"
+            worst = max(worst, drift)
+            lines.append(f"{ch.name}: {note}")
+        head = "cycle loops" if worst < 4 else f"cycle does NOT loop (worst {worst:.0f}px)"
+        return f"loop [{head}]: " + "; ".join(lines)
+
     def _say(self, character, text: str, frame: float,
              *, voice: str | None = None, gain: float = 1.0,
-             bubble: bool = True) -> str:
+             bubble: bool = True, lipsync: bool = True) -> str:
         """A character speaks. TTS renders now and is CACHED to the project dir,
         so the scene replays its dialogue without piper installed — the same
         persist-the-samples rule the doc uses for poses. A speech bubble shows
         above the speaker for the duration (bubble=False for off-screen voice).
+
+        `lipsync` (when the speaker's face has the say_* mouths) flaps the mouth from
+        the audio's own RMS envelope — the model cannot hear, but the mouth is
+        arithmetic over the WAV it just rendered.
         """
         from ..audio import voice as V
 
@@ -445,7 +603,19 @@ class Session:
         self.doc["audio"]["dialogue"].append(entry)
         if entry["bubble"]:
             self._draw_bubble(ch, frame, dur_s)
-        return f"{ch.name if ch else 'voice'} says {text!r} at f{frame:g} ({dur_s:.1f}s)"
+
+        synced = False
+        if lipsync and ch is not None:
+            from ..audio.lipsync import LIPSYNC_SLOTS, mouth_levels
+
+            if all(slot in ch.face_layers for slot in LIPSYNC_SLOTS):
+                for f, level in mouth_levels(samples, fps=self.scene.fps,
+                                             start_frame=frame):
+                    self._set_expression(ch, LIPSYNC_SLOTS[level], f)
+                synced = True
+        tail = " +lip-sync" if synced else ""
+        return (f"{ch.name if ch else 'voice'} says {text!r} at f{frame:g} "
+                f"({dur_s:.1f}s){tail}")
 
     def _draw_bubble(self, ch: Character, frame: float, dur_s: float) -> None:
         """A minimal speech bubble above the speaker's head, held for the line."""
@@ -639,6 +809,210 @@ class Session:
             )
         return f"shot {prefix!r}: f{start:g}-{end:g} ({len(want)} layer(s))"
 
+    # ------------------------------------------------------------------ camera
+    def _world(self):
+        """The camera container: content re-parents under one layer so its transform
+        is a camera (pan=position, zoom=scale). Created lazily and populated with
+        everything on screen so far — so call camera AFTER building the scene (and
+        after any shot() gating, which reads top-level layers by name)."""
+        if self.camera_layer is None:
+            w = self.scene.layer("camera")
+            for sh in list(self.scene.comp.shapes):
+                if sh is not w and sh.parent is None:
+                    sh.parent = w
+            self.camera_layer = w
+        return self.camera_layer
+
+    def _apply_camera(self, keys: list[tuple]) -> None:
+        """Write world-transform keyframes. Each key is (frame, zoom, focal_x,
+        focal_y, shake_x, shake_y); the position that keeps `focal` centred under a
+        `zoom` is center - zoom*focal, plus the shake offset."""
+        from glaxnimate import utils
+
+        w = self._world()
+        cw, ch = float(self.scene.comp.width), float(self.scene.comp.height)
+        for f, z, fx, fy, sx, sy in keys:
+            w.transform.scale.set_keyframe(float(f), utils.Vector2D(z, z))
+            w.transform.position.set_keyframe(
+                float(f), utils.Point(cw / 2 - z * fx + sx, ch / 2 - z * fy + sy))
+
+    def _impact_camera(self, frame: float, x: float | None = None,
+                       y: float | None = None, *, zoom: float = 1.2,
+                       shake: float = 9.0, ramp: int = 2, hold: int = 3,
+                       shake_frames: int = 6, record: bool = True) -> str:
+        """The hit-seller: a fast punch-in toward (x, y) plus a decaying screen shake,
+        both fired on the contact `frame`. Fire it on the same frame as the impact
+        flash, the hit sfx and the hitstop and the whole blow lands as one moment.
+
+        Deterministic (no RNG): the shake is a damped two-axis oscillation, so a scene
+        replays and lints identically."""
+        cw, ch = float(self.scene.comp.width), float(self.scene.comp.height)
+        fx = cw / 2 if x is None else float(x)
+        fy = ch / 2 if y is None else float(y)
+        f0 = float(frame)
+        total = 2 * ramp + hold
+        window = max(total, shake_frames)
+
+        def zoom_at(df: float) -> float:
+            if df <= 0 or df >= total:
+                return 1.0
+            if df < ramp:
+                return 1.0 + (zoom - 1.0) * principles.ease_out(df / ramp)
+            if df < ramp + hold:
+                return zoom
+            return 1.0 + (zoom - 1.0) * (1.0 - principles.ease_in((df - ramp - hold) / ramp))
+
+        keys: list[tuple] = [(0.0, 1.0, cw / 2, ch / 2, 0.0, 0.0)]
+        span = zoom - 1.0 or 1.0
+        for k in range(int(window) + 1):
+            z = zoom_at(float(k))
+            # focal blends to centre as the zoom returns to 1, so z==1 is neutral
+            tz = (z - 1.0) / span
+            efx = cw / 2 + (fx - cw / 2) * tz
+            efy = ch / 2 + (fy - ch / 2) * tz
+            if k < shake_frames:
+                d = 1.0 - k / shake_frames
+                sx, sy = shake * d * math.cos(k * 2.3), shake * d * math.sin(k * 3.1)
+            else:
+                sx = sy = 0.0
+            keys.append((f0 + k, z, efx, efy, sx, sy))
+        keys.append((f0 + window, 1.0, cw / 2, ch / 2, 0.0, 0.0))
+        self._apply_camera(keys)
+        if record:
+            self.doc.setdefault("camera", []).append({
+                "op": "impact", "frame": f0, "x": x, "y": y, "zoom": zoom,
+                "shake": shake, "ramp": ramp, "hold": hold, "shake_frames": shake_frames,
+            })
+        return f"impact camera at f{f0:g}: zoom {zoom:g}x + shake {shake:g}px"
+
+    def _camera_move(self, start: float, end: float, *, zoom: float = 1.0,
+                     focus_x: float | None = None, focus_y: float | None = None,
+                     record: bool = True) -> str:
+        """A held camera move: ease from the current neutral framing to `zoom` centred
+        on (focus_x, focus_y) between `start` and `end` frames, for staging and slow
+        push-ins. Pass zoom=1 with a focus to pan; zoom>1 to push in."""
+        cw, ch = float(self.scene.comp.width), float(self.scene.comp.height)
+        fx = cw / 2 if focus_x is None else float(focus_x)
+        fy = ch / 2 if focus_y is None else float(focus_y)
+        keys = [
+            (0.0, 1.0, cw / 2, ch / 2, 0.0, 0.0),
+            (float(start), 1.0, cw / 2, ch / 2, 0.0, 0.0),
+            (float(end), zoom, fx, fy, 0.0, 0.0),
+        ]
+        self._apply_camera(keys)
+        if record:
+            self.doc.setdefault("camera", []).append({
+                "op": "move", "start": float(start), "end": float(end),
+                "zoom": zoom, "x": focus_x, "y": focus_y,
+            })
+        return f"camera move f{start:g}-{end:g}: zoom {zoom:g}x"
+
+    # ----------------------------------------- two-figure & props-as-toys (WS4)
+    def _char(self, character) -> Character:
+        """Resolve a character by name or object, with a teaching error."""
+        ch = character if isinstance(character, Character) else next(
+            (c for c in self.characters if c.name == character), None)
+        if ch is None:
+            raise ValueError(
+                f"no character {character!r}; have {[c.name for c in self.characters]}")
+        return ch
+
+    def _wield(self, character, prop, *, bone: str = "arm_lower",
+               offset: tuple | None = None, scale: float = 1.0,
+               record: bool = True) -> str:
+        """Put a prop in a character's hand: it rides the bone for the whole clip.
+
+        The Animator-vs-Animation signature — a stick figure *using* an object. The
+        prop is drawn once into the hand bone's layer, so the bone's transform swings
+        it for free (a sword follows a `swing`, a torch bobs with a walk). `bone`
+        defaults to the near forearm; `offset` defaults to the bone tip (the hand).
+        Pair with a `swing` beat for a weapon strike, or `throw` to let it go.
+        """
+        from glaxnimate import utils
+
+        ch = self._char(character)
+        if bone not in ch.bone_layers:
+            raise ValueError(
+                f"{ch.name} has no bone {bone!r}; bones: {sorted(ch.bone_layers)}")
+        data = prop if isinstance(prop, dict) else assets.load_prop(prop)
+        hand = ch.bone_layers[bone]
+        blen = ch.body.rig.joints[bone].length
+        ox, oy = offset if offset is not None else (blen, 0.0)
+
+        g = hand.add_shape("Group")
+        from . import props as P
+        P.draw_prop(g, data, x=0.0, ground_y=0.0, scale=scale)
+        g.transform.position.value = utils.Point(float(ox), float(oy))
+        if record:
+            self.doc.setdefault("wields", []).append({
+                "character": ch.name, "prop": prop if isinstance(prop, str) else data,
+                "bone": bone, "offset": [float(ox), float(oy)], "scale": scale,
+            })
+        return f"{ch.name} wields a prop on {bone}"
+
+    def _throw(self, prop, *, x0: float, y0: float, x1: float, y1: float,
+               apex: float = 120.0, release: float = 0.0, frames: float | None = None,
+               spin: float = 360.0, scale: float = 1.0, record: bool = True) -> str:
+        """A thrown object: a prop on a ballistic arc, appearing at the `release` frame.
+
+        The other half of props-as-toys — a wielded thing let go. It flies from
+        (x0, y0) to (x1, y1) over a parabola `apex` px tall, spinning `spin` degrees,
+        invisible until `release`. Reuses the prop-on-a-motion-path baker; the arc is
+        the same parabola `jump` uses.
+        """
+        from glaxnimate import model
+
+        from ..cartoon import motion
+        from ..cartoon.geometry import Vec2
+        from .bake import bake_prop_samples
+
+        data = prop if isinstance(prop, dict) else assets.load_prop(prop)
+        end = float(self.frames if frames is None else frames)
+        span = max(end - release, 1.0)
+        samples = []
+        for i in range(int(span) + 1):
+            s = i / span
+            x = x0 + (x1 - x0) * s
+            y = y0 + (y1 - y0) * s - apex * 4.0 * s * (1.0 - s)  # parabola, up = -y
+            samples.append(motion.Sample(int(release + i), Vec2(x, y),
+                                         scale=Vec2(1.0, 1.0), angle=spin * s))
+        lname = f"thrown.{len(self.doc.setdefault('throws', []))}"
+        lay = bake_prop_samples(self.scene, data, samples, scale=scale, layer_name=lname)
+        if release > 0:  # invisible until it leaves the hand
+            lay.opacity.set_keyframe(0.0, 0.0)
+            tr = model.KeyframeTransition()
+            tr.hold = True
+            lay.opacity.set_transition(0.0, tr)
+            lay.opacity.set_keyframe(float(release), 1.0)
+        if record:
+            self.doc["throws"].append({
+                "prop": prop if isinstance(prop, str) else data,
+                "x0": x0, "y0": y0, "x1": x1, "y1": y1, "apex": apex,
+                "release": release, "frames": frames, "spin": spin, "scale": scale,
+                "layer": lname,
+            })
+        return f"thrown prop f{release:g}: ({x0:g},{y0:g})->({x1:g},{y1:g})"
+
+    def _clash(self, frame: float, x: float, y: float, *, sfx: str | None = "splat",
+               fx: str | None = "impact", camera: bool = True, zoom: float = 1.3,
+               shake: float = 10.0) -> str:
+        """The 'it connected' bundle on one contact frame: an impact flash, a hit sfx,
+        and a camera punch-in + shake — the convergence in a single call.
+
+        The poses are composed separately (the attacker's `hitstop`, the defender's
+        `knockback`); this lands everything else on the frame they meet. A two-figure
+        exchange is: bake the attacker with a hitstopped strike, bake the defender
+        with sequence((idle, contact), (knockback, ...)), then clash() on contact.
+        """
+        msgs = []
+        if fx:
+            msgs.append(self._add_effect(fx, x, y, frame))
+        if sfx:
+            msgs.append(self._add_sound(sfx, frame))
+        if camera:
+            msgs.append(self._impact_camera(frame, x, y, zoom=zoom, shake=shake))
+        return " | ".join(msgs)
+
     def _add_moving_prop(self, prop, samples, *, name: str | None = None,
                          scale: float | tuple[float, float] = 1.0,
                          radius: float | None = None, record: bool = True):
@@ -722,6 +1096,8 @@ class Session:
             "human": presets.human,
             "biped": presets.biped,
             "quadruped": presets.quadruped,
+            "stick": presets.stick,
+            "lineart": presets.lineart,
             "make_gait": presets.make_gait,
             "pace": presets.pace,
             "pose_at": pose_at,  # build a base pose_fn to wrap with actions.trail
@@ -738,16 +1114,26 @@ class Session:
             "set_expression": self._set_expression,
             "scenery": self._scenery,
             "add_sound": self._add_sound,
+            "add_effect": self._add_effect,
+            "auto_fx": self._auto_fx,
             "add_moving_prop": self._add_moving_prop,
             "shot": self._shot,
+            "impact_camera": self._impact_camera,
+            "camera_move": self._camera_move,
             "auto_sfx": self._auto_sfx,
             "music": self._music,
+            "beats": self._beats,
+            "snap_to_beat": self._snap_to_beat,
+            "loop_report": self._loop_report,
             "say": self._say,
             # the stage
             "add_character": self._add_character,
             "add_object": self._add_object,
             "add_chaser": self._add_chaser,
             "add_action": self._add_action,
+            "wield": self._wield,
+            "throw": self._throw,
+            "clash": self._clash,
             "scene": self.scene,
             "ground": self.ground_y,
             "frames": self.frames,
@@ -817,9 +1203,37 @@ class Session:
                 shape=ob.get("shape", "Ellipse"), size=size,
                 color=ob.get("color", "#e8543f"), layer_name=ob["name"],
             )
+        for e in doc.get("effects", []):
+            from ..cartoon.effects import resolve_fx
+            from .bake import bake_effect
+            lay = bake_effect(session.scene, resolve_fx(e["fx"]), x=e["x"], y=e["y"],
+                              start=e["frame"], layer_name=e.get("layer", "fx"))
+            if e.get("auto"):
+                session.fx_layers.append(lay)
+        for w in doc.get("wields", []):
+            ch = next((c for c in session.characters if c.name == w["character"]), None)
+            if ch:
+                session._wield(ch, w["prop"], bone=w["bone"],
+                               offset=tuple(w["offset"]), scale=w["scale"], record=False)
+        for th in doc.get("throws", []):
+            session._throw(th["prop"], x0=th["x0"], y0=th["y0"], x1=th["x1"],
+                           y1=th["y1"], apex=th["apex"], release=th["release"],
+                           frames=th["frames"], spin=th["spin"], scale=th["scale"],
+                           record=False)
         # after every layer exists, or a prefix would match nothing
         for sh in doc.get("shots", []):
             session._shot(sh["prefix"], sh["start"], sh["end"], record=False)
+        # camera last of all: it re-parents every content layer under the world layer
+        for cam in doc.get("camera", []):
+            if cam["op"] == "impact":
+                session._impact_camera(
+                    cam["frame"], cam.get("x"), cam.get("y"), zoom=cam["zoom"],
+                    shake=cam["shake"], ramp=cam["ramp"], hold=cam["hold"],
+                    shake_frames=cam["shake_frames"], record=False)
+            elif cam["op"] == "move":
+                session._camera_move(
+                    cam["start"], cam["end"], zoom=cam["zoom"],
+                    focus_x=cam.get("x"), focus_y=cam.get("y"), record=False)
         for entry in (doc.get("audio") or {}).get("dialogue", []):
             if entry.get("bubble") and entry.get("character"):
                 ch = next((c for c in session.characters

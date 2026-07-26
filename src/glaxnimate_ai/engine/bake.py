@@ -25,7 +25,7 @@ Glaxnimate.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from glaxnimate import model, utils
 
@@ -92,10 +92,8 @@ def _write_scalar(prop, keys: list[ScalarKey], *, transitions: bool = True,
                   offset: float = 0.0) -> int:
     """Write a reduced scalar channel; returns how many keys it cost.
 
-    `transitions=False` writes plain linear keys. It exists because
-    **`set_transition` on a scale property segfaults** in the bindings (an
-    upstream bug — position and rotation are fine); scale channels ship linear
-    keys and the reducer compensates with a few extra of them.
+    `transitions=False` writes plain linear keys, for channels that ship linear
+    and let the reducer compensate with a few extra keys instead of timing curves.
 
     `offset` shifts every key: the reducer counts from 0 because it only sees a
     list, so a clip that starts partway through the film says so here.
@@ -135,6 +133,33 @@ def _write_point(prop, keys: list[PointKey], *, transitions: bool = True,
     return len(keys)
 
 
+def _write_scale(prop, keys: list[PointKey], *, transitions: bool = True,
+                 offset: float = 0.0) -> int:
+    """Write a reduced scale channel. Returns how many keys it cost.
+
+    Scale is a **QVector2D** property, so it must be written with `utils.Vector2D`:
+    a `utils.Point` (QPointF) silently fails to write it, which is why the historical
+    `_write_point`-into-scale calls never actually squashed anything. With the
+    patched binding, eased scale via `set_transition` also works, so this can carry
+    timing like position and rotation. Empty channel falls back to identity (1, 1).
+    """
+    if len(keys) <= 1:
+        v = keys[0].value if keys else Vec2(1.0, 1.0)
+        prop.value = utils.Vector2D(v.x, v.y)
+        return 0
+    for k in keys:
+        prop.set_keyframe(float(k.frame) + offset, utils.Vector2D(k.value.x, k.value.y))
+    if transitions:
+        for k in keys[:-1]:
+            if (k.cy1, k.cy2) == _LINEAR:
+                continue
+            tr = model.KeyframeTransition()
+            tr.before = utils.Point(1.0 / 3.0, k.cy1)
+            tr.after = utils.Point(2.0 / 3.0, k.cy2)
+            prop.set_transition(float(k.frame) + offset, tr)
+    return len(keys)
+
+
 def _clip_offset(samples) -> float:
     """The frame a sample list actually starts on.
 
@@ -160,15 +185,61 @@ def _clip_offset(samples) -> float:
 
 
 # ----------------------------------------------------------------- skinning
+def _stroke_styler(g, color: str, width: float):
+    """A round-capped, round-joined stroke — the pen that draws a stick figure.
+
+    Round caps matter: each bone is its own layer, so a rounded line end is what
+    makes one bone meet the next cleanly at a bend — the stroke-mode equivalent of
+    the capsule's joint disc, at zero extra cost.
+    """
+    st = g.add_shape("Stroke")
+    st.color.value = color
+    st.width.value = width
+    st.cap = st.Cap.RoundCap
+    st.join = st.Join.RoundJoin
+    return st
+
+
 def _draw_part(layer, length: float, part: Part, *, marker: float = 0.0) -> None:
     """Draw one bone's skin into its layer, in local space (origin = the joint).
 
-    A capsule plus a disc at the joint — the disc is what stops two capsules
-    meeting at an angle from leaving a notch on the outside of every bend. A
-    `head` part is an ellipse at the tip instead; a `tip` is a hand/paw dot.
-    Everything here is static: the layer's transform does all the moving.
+    Two looks. **Filled** (default): a capsule plus a disc at the joint — the disc
+    stops two capsules meeting at an angle from leaving a notch on every bend. A
+    `head` part is a filled ellipse at the tip; a `tip` is a hand/paw dot.
+    **Stroke** (`part.stroke`, the stick-figure look): an open pen line from origin
+    to tip, `width` its weight; a `head` becomes a ring (outline), a dot (solid) or
+    a fill, per `head_style`. Either way it is static — the transform does the moving.
     """
     g = layer.add_shape("Group")
+
+    if part.stroke:
+        if part.head:
+            hw, hh = part.head
+            if part.head_style == "ring":
+                _stroke_styler(g, part.color, part.width)
+            else:  # "dot" / "fill": a solid head
+                g.add_shape("Fill").color.value = part.color
+            e = g.add_shape("Ellipse")
+            e.size.value = utils.Size(hw, hh)
+            e.position.value = utils.Point(length, 0.0)
+        else:
+            _stroke_styler(g, part.color, part.width)
+            p = g.add_shape("Path")
+            bez = p.shape.value
+            zero = utils.Point(0.0, 0.0)
+            bez.add_point(utils.Point(0.0, 0.0), zero, zero)
+            bez.line_to(utils.Point(max(length, 1.0), 0.0))  # open path: no close()
+            p.shape.value = bez
+            if part.tip > 0:  # a hand/paw dot wider than the line
+                dot = layer.add_shape("Group")
+                dot.add_shape("Fill").color.value = part.color
+                t = dot.add_shape("Ellipse")
+                t.size.value = utils.Size(part.tip * 2, part.tip * 2)
+                t.position.value = utils.Point(length, 0.0)
+        if marker > 0:
+            _draw_marker(layer, length, marker)
+        return
+
     g.add_shape("Fill").color.value = part.color
 
     if part.head:
@@ -193,12 +264,17 @@ def _draw_part(layer, length: float, part: Part, *, marker: float = 0.0) -> None
         t.size.value = utils.Size(part.tip * 2, part.tip * 2)
         t.position.value = utils.Point(length, 0.0)
 
-    if marker > 0:  # contact marker rides the bone tip — static, zero keys
-        mg = layer.add_shape("Group")
-        mg.add_shape("Fill").color.value = "#e8543f"
-        e = mg.add_shape("Ellipse")
-        e.size.value = utils.Size(marker * 2, marker * 2)
-        e.position.value = utils.Point(length, 0.0)
+    if marker > 0:
+        _draw_marker(layer, length, marker)
+
+
+def _draw_marker(layer, length: float, marker: float) -> None:
+    """A contact marker dot riding the bone tip — static, zero keys."""
+    mg = layer.add_shape("Group")
+    mg.add_shape("Fill").color.value = "#e8543f"
+    e = mg.add_shape("Ellipse")
+    e.size.value = utils.Size(marker * 2, marker * 2)
+    e.position.value = utils.Point(length, 0.0)
 
 
 def bake_rig(
@@ -268,14 +344,17 @@ def bake_rig(
             lay.parent = layer_of[parent]
 
     # ---- skins (static, local space)
+    # replace() keeps stroke/head/tip/z/head_style intact under a colour/thickness
+    # override — a plain Part() reconstruction used to silently drop them, which
+    # turned a stick figure back into filled capsules the moment you recoloured it.
     for name in body.bones:
         j = rig.joints[name]
         part = body.parts.get(name, Part())
         if color is not None or thickness is not None:
-            part = Part(
+            part = replace(
+                part,
                 width=thickness if thickness is not None else part.width,
                 color=color if color is not None else part.color,
-                head=part.head, tip=part.tip,
             )
         marker = joint_radius if (joint_color and joint_radius > 0
                                   and (j.contact or j.rolling)) else 0.0
@@ -342,10 +421,10 @@ def bake_samples(
     n = _write_point(g.transform.position, reduce_point(pos, tol=TOL_PX), offset=off)
     n += _write_scalar(g.transform.rotation, reduce_scalar(rot, tol=TOL_DEG),
                        offset=off)
-    # scale: linear keys only — set_transition on a scale property segfaults
-    # in the bindings. The ease=False reducer adds keys until linear segments
-    # are within tolerance instead.
-    n += _write_point(g.transform.scale,
+    # scale: written as Vector2D so it actually lands (a Point no-ops on a
+    # QVector2D property). Linear keys — the ease=False reducer adds keys until
+    # linear segments are within tolerance; eased scale is a later refinement.
+    n += _write_scale(g.transform.scale,
                       reduce_point(scl, tol=TOL_SCALE, ease=False),
                       transitions=False, offset=off)
     if stats is not None:
@@ -389,10 +468,57 @@ def bake_prop_samples(
                                                         tol=TOL_PX), offset=off)
     n += _write_scalar(g.transform.rotation, reduce_scalar([s.angle for s in samples],
                                                            tol=TOL_DEG), offset=off)
-    n += _write_point(g.transform.scale,
+    n += _write_scale(g.transform.scale,
                       reduce_point([s.scale for s in samples], tol=TOL_SCALE,
                                    ease=False),
                       transitions=False, offset=off)
     if stats is not None:
         stats["keyframes"] = n
+    return lay
+
+
+def bake_effect(
+    scene: Scene,
+    fx_data: dict,
+    *,
+    x: float,
+    y: float,
+    start: float,
+    layer_name: str = "fx",
+) -> model.shapes.Layer:
+    """Bake a short-lived effect: shapes drawn once, then grown, spun and faded.
+
+    The effect pops in on frame `start`, plays its `lifespan`, and is opacity-zero
+    before and after — so it costs nothing on every other frame and never lingers.
+    The grow envelope rides `transform.scale` (a `Vector2D`, only writable since the
+    binding fix); the fade rides the layer opacity. Position is static: an effect
+    happens *at* a spot (a foot plant, a fist's contact), it does not travel.
+    """
+    from .props import draw_prop
+
+    life = float(fx_data.get("lifespan", 6))
+    g0, g1 = fx_data.get("grow", [1.0, 1.0])
+    fade = bool(fx_data.get("fade", True))
+    spin = float(fx_data.get("spin", 0.0))
+    end = float(start) + life
+
+    lay = scene.layer(layer_name)
+    g = lay.add_shape("Group")
+    draw_prop(g, {"shapes": fx_data["shapes"]}, x=0.0, ground_y=0.0)
+
+    g.transform.position.value = utils.Point(float(x), float(y))
+    g.transform.scale.set_keyframe(float(start), utils.Vector2D(float(g0), float(g0)))
+    g.transform.scale.set_keyframe(end, utils.Vector2D(float(g1), float(g1)))
+    if spin:
+        g.transform.rotation.set_keyframe(float(start), 0.0)
+        g.transform.rotation.set_keyframe(end, spin)
+
+    # Opacity: invisible until `start`, pop to full, fade (or hold) to nothing by
+    # `end`, and the final keyframe holds it at zero forever after.
+    op = lay.opacity
+    pre = max(float(start) - 1.0, 0.0)
+    if pre < float(start):
+        op.set_keyframe(pre, 0.0)
+    op.set_keyframe(float(start), 1.0)
+    op.set_keyframe(end, 0.0 if fade else 1.0)
     return lay

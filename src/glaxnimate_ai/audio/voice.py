@@ -40,12 +40,21 @@ def voices_dir() -> Path:
 
 
 def _stub(text: str, sr: int) -> np.ndarray:
-    """Beeps standing in for speech: ~0.05 s per character, alternating pitch."""
+    """Beeps standing in for speech: ~0.05 s per character, alternating pitch.
+
+    A slow amplitude envelope fakes syllables so lip-sync has something to bite on
+    (a flat tone would hold the mouth open the whole line); it dips toward silence
+    at word gaps, so the mouth actually flaps. Deterministic in the text either way.
+    """
     dur = max(0.3, 0.05 * len(text))
     n = int(dur * sr)
     t = np.arange(n) / sr
     f = np.where((t * 4).astype(int) % 2 == 0, 420.0, 520.0)
-    sig = 0.3 * np.sin(2 * np.pi * np.cumsum(f) / sr)
+    # ~4 syllables/sec, gapped at spaces so words separate; never fully silent mid-word
+    syl = 0.55 + 0.45 * np.abs(np.sin(2 * np.pi * 4.0 * t))
+    words = max(text.count(" ") + 1, 1)
+    gap = 0.5 + 0.5 * (np.sin(2 * np.pi * words * t / max(dur, 1e-6)) > -0.4)
+    sig = 0.3 * syl * gap * np.sin(2 * np.pi * np.cumsum(f) / sr)
     k = int(0.01 * sr)
     sig[:k] *= np.linspace(0, 1, k)
     sig[-k:] *= np.linspace(1, 0, k)

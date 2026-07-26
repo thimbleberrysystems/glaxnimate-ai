@@ -1,0 +1,324 @@
+{
+ "version": 1,
+ "kind": "body",
+ "joints": [
+  {
+   "name": "hips",
+   "parent": null,
+   "length": 0.0,
+   "rest_angle": 0.0,
+   "offset": null,
+   "contact": false,
+   "rolling": false,
+   "radius": 0.0,
+   "mass": 0.0
+  },
+  {
+   "name": "spine",
+   "parent": "hips",
+   "length": 70.0,
+   "rest_angle": -90.0,
+   "offset": [
+    0,
+    0
+   ],
+   "contact": false,
+   "rolling": false,
+   "radius": 0.0,
+   "mass": 45.0
+  },
+  {
+   "name": "head",
+   "parent": "spine",
+   "length": 34.0,
+   "rest_angle": 0.0,
+   "offset": null,
+   "contact": false,
+   "rolling": false,
+   "radius": 0.0,
+   "mass": 8.0
+  },
+  {
+   "name": "arm_upper",
+   "parent": "spine",
+   "length": 45.0,
+   "rest_angle": 180.0,
+   "offset": null,
+   "contact": false,
+   "rolling": false,
+   "radius": 0.0,
+   "mass": 3.0
+  },
+  {
+   "name": "arm_lower",
+   "parent": "arm_upper",
+   "length": 40.0,
+   "rest_angle": 0.0,
+   "offset": null,
+   "contact": false,
+   "rolling": false,
+   "radius": 0.0,
+   "mass": 2.0
+  },
+  {
+   "name": "arm_upper_far",
+   "parent": "spine",
+   "length": 45.0,
+   "rest_angle": 180.0,
+   "offset": null,
+   "contact": false,
+   "rolling": false,
+   "radius": 0.0,
+   "mass": 3.0
+  },
+  {
+   "name": "arm_lower_far",
+   "parent": "arm_upper_far",
+   "length": 40.0,
+   "rest_angle": 0.0,
+   "offset": null,
+   "contact": false,
+   "rolling": false,
+   "radius": 0.0,
+   "mass": 2.0
+  },
+  {
+   "name": "thigh_l",
+   "parent": "hips",
+   "length": 80.0,
+   "rest_angle": 90.0,
+   "offset": [
+    0,
+    0
+   ],
+   "contact": false,
+   "rolling": false,
+   "radius": 0.0,
+   "mass": 10.0
+  },
+  {
+   "name": "shin_l",
+   "parent": "thigh_l",
+   "length": 80.0,
+   "rest_angle": 0.0,
+   "offset": null,
+   "contact": true,
+   "rolling": false,
+   "radius": 0.0,
+   "mass": 4.0
+  },
+  {
+   "name": "foot_l",
+   "parent": "shin_l",
+   "length": 22.0,
+   "rest_angle": -90.0,
+   "offset": null,
+   "contact": false,
+   "rolling": false,
+   "radius": 0.0,
+   "mass": 1.0
+  },
+  {
+   "name": "thigh_r",
+   "parent": "hips",
+   "length": 80.0,
+   "rest_angle": 90.0,
+   "offset": [
+    0,
+    0
+   ],
+   "contact": false,
+   "rolling": false,
+   "radius": 0.0,
+   "mass": 10.0
+  },
+  {
+   "name": "shin_r",
+   "parent": "thigh_r",
+   "length": 80.0,
+   "rest_angle": 0.0,
+   "offset": null,
+   "contact": true,
+   "rolling": false,
+   "radius": 0.0,
+   "mass": 4.0
+  },
+  {
+   "name": "foot_r",
+   "parent": "shin_r",
+   "length": 22.0,
+   "rest_angle": -90.0,
+   "offset": null,
+   "contact": false,
+   "rolling": false,
+   "radius": 0.0,
+   "mass": 1.0
+  }
+ ],
+ "limbs": [
+  {
+   "upper": "thigh_l",
+   "lower": "shin_l",
+   "bend_positive": true
+  },
+  {
+   "upper": "thigh_r",
+   "lower": "shin_r",
+   "bend_positive": true
+  }
+ ],
+ "swings": [
+  {
+   "joint": "arm_upper",
+   "phase": 0.5,
+   "amplitude": 22.0
+  },
+  {
+   "joint": "arm_upper_far",
+   "phase": 0.0,
+   "amplitude": 22.0
+  },
+  {
+   "joint": "head",
+   "phase": 0.0,
+   "amplitude": 3.0
+  }
+ ],
+ "bones": [
+  "arm_upper_far",
+  "arm_lower_far",
+  "thigh_r",
+  "shin_r",
+  "foot_r",
+  "spine",
+  "head",
+  "thigh_l",
+  "shin_l",
+  "foot_l",
+  "arm_upper",
+  "arm_lower"
+ ],
+ "leg_length": 160.0,
+ "parts": {
+  "arm_upper_far": {
+   "width": 7.0,
+   "color": "#1a1a1a",
+   "head": null,
+   "tip": 0.0,
+   "z": 0,
+   "stroke": true,
+   "head_style": "ring"
+  },
+  "arm_lower_far": {
+   "width": 7.0,
+   "color": "#1a1a1a",
+   "head": null,
+   "tip": 0.0,
+   "z": 0,
+   "stroke": true,
+   "head_style": "ring"
+  },
+  "thigh_r": {
+   "width": 7.0,
+   "color": "#1a1a1a",
+   "head": null,
+   "tip": 0.0,
+   "z": 0,
+   "stroke": true,
+   "head_style": "ring"
+  },
+  "shin_r": {
+   "width": 7.0,
+   "color": "#1a1a1a",
+   "head": null,
+   "tip": 0.0,
+   "z": 0,
+   "stroke": true,
+   "head_style": "ring"
+  },
+  "foot_r": {
+   "width": 7.0,
+   "color": "#1a1a1a",
+   "head": null,
+   "tip": 0.0,
+   "z": 0,
+   "stroke": true,
+   "head_style": "ring"
+  },
+  "spine": {
+   "width": 7.0,
+   "color": "#1a1a1a",
+   "head": null,
+   "tip": 0.0,
+   "z": 0,
+   "stroke": true,
+   "head_style": "ring"
+  },
+  "head": {
+   "width": 7.0,
+   "color": "#1a1a1a",
+   "head": [
+    42.0,
+    42.0
+   ],
+   "tip": 0.0,
+   "z": 0,
+   "stroke": true,
+   "head_style": "ring"
+  },
+  "thigh_l": {
+   "width": 7.0,
+   "color": "#1a1a1a",
+   "head": null,
+   "tip": 0.0,
+   "z": 0,
+   "stroke": true,
+   "head_style": "ring"
+  },
+  "shin_l": {
+   "width": 7.0,
+   "color": "#1a1a1a",
+   "head": null,
+   "tip": 0.0,
+   "z": 0,
+   "stroke": true,
+   "head_style": "ring"
+  },
+  "foot_l": {
+   "width": 7.0,
+   "color": "#1a1a1a",
+   "head": null,
+   "tip": 0.0,
+   "z": 0,
+   "stroke": true,
+   "head_style": "ring"
+  },
+  "arm_upper": {
+   "width": 7.0,
+   "color": "#1a1a1a",
+   "head": null,
+   "tip": 0.0,
+   "z": 0,
+   "stroke": true,
+   "head_style": "ring"
+  },
+  "arm_lower": {
+   "width": 7.0,
+   "color": "#1a1a1a",
+   "head": null,
+   "tip": 0.0,
+   "z": 0,
+   "stroke": true,
+   "head_style": "ring"
+  }
+ },
+ "slots": {
+  "face": {
+   "bone": "head",
+   "offset": [
+    34.0,
+    8.0
+   ]
+  }
+ }
+}

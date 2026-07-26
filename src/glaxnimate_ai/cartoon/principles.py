@@ -24,6 +24,7 @@ __all__ = [
     "ease_in_out",
     "anticipate",
     "overshoot",
+    "hold_snap",
     "bounce_decay",
     "squash_stretch",
     "arc",
@@ -69,6 +70,17 @@ def overshoot(t: float, amount: float = 0.12) -> float:
     """Sail past the target and settle back. Weight has momentum."""
     t = clamp(t, 0.0, 1.0)
     return ease_out(t) + amount * math.sin(math.pi * t) * t
+
+
+def hold_snap(t: float, hold: float = 0.4, power: float = 3.0) -> float:
+    """Sit still, then snap. Stays at 0 until `hold` of the way through, then eases
+    in hard to 1. The scalar essence of comic snap timing — the held beat before a
+    sudden move is what reads as intent, then speed. The opposite of dead-linear.
+    """
+    t = clamp(t, 0.0, 1.0)
+    if t <= hold:
+        return 0.0
+    return ease_in((t - hold) / (1.0 - hold), power)
 
 
 def bounce_decay(n: int, restitution: float = 0.6) -> list[float]:

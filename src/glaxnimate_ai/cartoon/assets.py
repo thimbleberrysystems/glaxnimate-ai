@@ -33,13 +33,14 @@ __all__ = [
     "prop_validate", "save_prop", "load_prop",
     "register_gait", "save_gait", "load_gait",
     "face_validate", "save_face", "load_face",
+    "fx_validate",
     "save_asset", "load_asset",
 ]
 
 VERSION = 1
-KINDS = ("body", "gait", "prop", "action", "face", "sfx")
+KINDS = ("body", "gait", "prop", "action", "face", "sfx", "fx")
 _DIRS = {"body": "bodies", "gait": "gaits", "prop": "props",
-         "action": "actions", "face": "faces", "sfx": "sfx"}
+         "action": "actions", "face": "faces", "sfx": "sfx", "fx": "fx"}
 
 
 def assets_root() -> Path:
@@ -91,7 +92,8 @@ def body_to_data(body: Body) -> dict:
         })
     parts = {
         name: {"width": p.width, "color": p.color,
-               "head": list(p.head) if p.head else None, "tip": p.tip}
+               "head": list(p.head) if p.head else None, "tip": p.tip,
+               "z": p.z, "stroke": p.stroke, "head_style": p.head_style}
         for name, p in body.parts.items()
     }
     return {
@@ -169,7 +171,9 @@ def body_from_data(data: dict) -> Body:
         parts[name] = Part(
             width=float(p.get("width", 14.0)), color=p.get("color", "#33333c"),
             head=tuple(p["head"]) if p.get("head") else None,
-            tip=float(p.get("tip", 0.0)),
+            tip=float(p.get("tip", 0.0)), z=int(p.get("z", 0)),
+            stroke=bool(p.get("stroke", False)),
+            head_style=p.get("head_style", "ring"),
         )
 
     slots = {}
@@ -324,6 +328,28 @@ def load_face(name: str) -> dict:
     return face_validate(json.loads(p.read_text()))
 
 
+def fx_validate(data: dict) -> dict:
+    """An effect: prop-schema shapes plus a short animation envelope.
+
+    Shapes are drawn in local space around the effect's origin; `lifespan` is how
+    many frames it lives; `grow` scales from->to across that span (real
+    transform.scale); `fade` ramps opacity to zero; `spin` is total rotation. Kept
+    deliberately close to the prop schema so any prop-drawing knowledge transfers.
+    """
+    _check_version(data, "fx")
+    shapes = data.get("shapes")
+    if not shapes:
+        raise ValueError("an fx document needs a non-empty 'shapes' list")
+    prop_validate({"version": VERSION, "kind": "prop", "shapes": shapes})
+    life = data.get("lifespan", 6)
+    if not (isinstance(life, (int, float)) and life > 0):
+        raise ValueError("fx 'lifespan' must be a positive number of frames")
+    grow = data.get("grow", [1.0, 1.0])
+    if not (isinstance(grow, (list, tuple)) and len(grow) == 2):
+        raise ValueError("fx 'grow' must be [from_scale, to_scale]")
+    return data
+
+
 # ------------------------------------------------------------------ generic
 def _sfx_validate(data: dict) -> dict:
     from ..audio.synth import sfx_validate
@@ -332,7 +358,7 @@ def _sfx_validate(data: dict) -> dict:
 
 
 _VALIDATORS = {"body": body_from_data, "gait": register_gait, "prop": prop_validate,
-               "face": face_validate, "sfx": _sfx_validate}
+               "face": face_validate, "sfx": _sfx_validate, "fx": fx_validate}
 
 
 def save_asset(kind: str, name: str, data: dict) -> Path:
