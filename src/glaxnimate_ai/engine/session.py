@@ -1058,7 +1058,8 @@ class Session:
         if bone not in ch.bone_layers:
             raise ValueError(
                 f"{ch.name} has no bone {bone!r}; bones: {sorted(ch.bone_layers)}")
-        data = prop if isinstance(prop, dict) else assets.load_prop(prop)
+        data = ({"shapes": prop} if isinstance(prop, list)
+                else prop if isinstance(prop, dict) else assets.load_prop(prop))
         hand = ch.bone_layers[bone]
         blen = ch.body.rig.joints[bone].length
         ox, oy = offset if offset is not None else (blen, 0.0)
@@ -1090,7 +1091,8 @@ class Session:
         from ..cartoon.geometry import Vec2
         from .bake import bake_prop_samples
 
-        data = prop if isinstance(prop, dict) else assets.load_prop(prop)
+        data = ({"shapes": prop} if isinstance(prop, list)
+                else prop if isinstance(prop, dict) else assets.load_prop(prop))
         end = float(self.frames if frames is None else frames)
         span = max(end - release, 1.0)
         samples = []
