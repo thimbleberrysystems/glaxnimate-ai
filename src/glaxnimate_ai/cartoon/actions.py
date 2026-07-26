@@ -22,18 +22,19 @@ from __future__ import annotations
 import math
 from collections.abc import Callable
 
+from .gait import Gait, pose_at
 from .geometry import Vec2, clamp
 from .presets import Body
 from .principles import anticipate, ease_in, ease_in_out, ease_out, overshoot
 from .rig import Pose, solve_two_bone
 
 __all__ = [
-    "jump", "idle", "wave", "trail", "sequence",
+    "jump", "idle", "wave", "trail", "sequence", "locomote",
     # combat / stunt beats — a stick figure that fights, not just walks
     "punch", "kick", "dash", "flip", "swing", "block", "knockback", "land",
     "line_of_action",
     # everyday acting verbs
-    "celebrate", "fall", "sit", "tap",
+    "celebrate", "fall", "sit", "tap", "pushup", "pedal", "fly",
     # snap-timing toolkit — the difference between snappy and floaty
     "hold", "hitstop", "retime",
 ]
@@ -712,6 +713,108 @@ def tap(body: Body, *, ground_y: float, x: float = 0.0, facing: float = 1.0,
     return pose_fn
 
 
+def pushup(body: Body, *, ground_y: float, x: float = 0.0, facing: float = 1.0,
+           reps: int = 3, frames: int = 36) -> PoseFn:
+    """Push-ups: a horizontal plank, hands and feet on the ground, bobbing up and down.
+
+    The body tips to horizontal (root rotated) with the hands planted forward and the
+    feet planted back; the whole plank rises and dips `reps` times. Both contacts IK
+    to the ground so nothing skates or sinks."""
+    hip = body.hip_height
+    plank_y = ground_y - 0.42 * hip           # how high the hips ride at the top
+    def pose_fn(t: float) -> Pose:
+        p = clamp(t / frames, 0.0, 1.0)
+        dip = 0.5 - 0.5 * math.cos(2.0 * math.pi * reps * p)   # 0 up .. 1 down
+        rise = (0.42 - 0.16 * dip) * hip
+        # torso horizontal: rotate the whole rig so the spine lies flat, head forward
+        pose = _stance(body, ground_y, x, root_angle=88.0 * facing,
+                       lift=rise - hip, plant=False)
+        frames_solved = body.rig.solve(pose)
+        # hands plant forward, feet plant back — a straight, supported line
+        for a_up, a_lo, fwd in (("arm_upper", "arm_lower", 0.42),
+                                ("arm_upper_far", "arm_lower_far", 0.42)):
+            if a_up in body.rig.joints:
+                sh = frames_solved[a_up].origin
+                _ik_foot_to(body, pose, frames_solved, a_up, a_lo,
+                            Vec2(sh.x + fwd * hip * facing, ground_y))
+        for up_n, lo_n in _leg_pairs(body):
+            hipj = frames_solved[up_n].origin
+            _ik_foot_to(body, pose, frames_solved, up_n, lo_n,
+                        Vec2(hipj.x - 0.5 * hip * facing, ground_y))
+        return pose
+
+    return pose_fn
+
+
+def pedal(body: Body, *, ground_y: float, x0: float = 0.0, x1: float = 200.0,
+          seat: float | None = None, revolutions: float = 3.0, frames: int = 30) -> PoseFn:
+    """Ride: seated and travelling x0->x1 while the legs pump a pedal circle.
+
+    For a bike, a trike, a pedal-boat. The feet trace circles above the ground (never
+    planted, so they cannot skate), the hips sit at `seat` height and glide forward.
+    Add the vehicle itself as a prop on the same path (add_moving_prop / a rolling
+    wheel)."""
+    hip = body.hip_height
+    seat_h = seat if seat is not None else hip * 0.62
+    pairs = _leg_pairs(body)
+    def pose_fn(t: float) -> Pose:
+        p = clamp(t / frames, 0.0, 1.0)
+        gx = x0 + (x1 - x0) * p
+        pose = Pose(root=Vec2(gx, ground_y - seat_h), root_angle=0.0)
+        _set(pose, body, "spine", 14.0)                    # lean forward over the bars
+        frames_solved = body.rig.solve(pose)
+        r = 0.16 * hip                                     # pedal-crank radius
+        cx = gx + 0.14 * hip                               # crank centre, ahead of hips
+        cy = ground_y - 0.20 * hip
+        for i, (up_n, lo_n) in enumerate(pairs):           # feet 180deg apart on the crank
+            ang = 2.0 * math.pi * revolutions * p + (0.0 if i == 0 else math.pi)
+            _ik_foot_to(body, pose, frames_solved, up_n, lo_n,
+                        Vec2(cx + r * math.cos(ang), cy + r * math.sin(ang)))
+        for a in ("arm_upper", "arm_upper_far"):           # arms reach to the bars
+            _set(pose, body, a, -70.0)
+        return pose
+
+    return pose_fn
+
+
+def fly(body: Body, *, ground_y: float, x0: float = 0.0, x1: float = 240.0,
+        height: float = 120.0, flaps: int = 4, frames: int = 30) -> PoseFn:
+    """Flight: airborne and travelling x0->x1, wings (or arms) flapping and the body
+    bobbing on each downstroke.
+
+    Feet tuck up, so nothing ever touches the ground (no skating to police). Flaps any
+    joints named 'wing*' if the body has them, otherwise the arms — so a bird flaps
+    wings and a stick figure flaps its arms like a cartoon superhero. `height` is how
+    high above the ground it cruises."""
+    hip = body.hip_height
+    wings = [j for j in body.rig.joints if "wing" in j.lower()] or \
+            [j for j in ("arm_upper", "arm_upper_far") if j in body.rig.joints]
+    def pose_fn(t: float) -> Pose:
+        p = clamp(t / frames, 0.0, 1.0)
+        flap = math.sin(2.0 * math.pi * flaps * p)          # -1 up .. +1 down
+        gx = x0 + (x1 - x0) * p
+        lift = height + 0.12 * height * (-flap)             # rises on the downstroke
+        pose = _stance(body, ground_y, gx, lift=lift, plant=False)
+        for w in wings:
+            _set(pose, body, w, -95.0 + 55.0 * flap)        # sweep around horizontal
+        for up_n, lo_n in _leg_pairs(body):                 # legs trail, tucked up
+            _set(pose, body, up_n, -18.0)
+            _set(pose, body, lo_n, 30.0)
+        return pose
+
+    return pose_fn
+
+
+def locomote(body: Body, gait: Gait, *, ground_y: float, x0: float = 0.0) -> PoseFn:
+    """Adapt a gait into a `pose_fn` so it composes in `sequence` with actions.
+
+    Locomotion is a gait; the acting verbs are pose functions — and `sequence` speaks
+    pose functions. This is the one-line bridge: `sequence((locomote(body, walk,
+    ground_y=g, x0=90), 14), (fall(body, ground_y=g, x=230), 20))` walks in, then
+    falls."""
+    return lambda t: pose_at(body.rig, gait, t, ground_y=ground_y, body_x0=x0)
+
+
 # ============================================================ snap-timing toolkit
 # "Snappy vs floaty" is the timing tell that separates viral motion from a moving
 # diagram. `diagnose.py` *detects* dead-linear spacing; these *author* the fix.
@@ -758,11 +861,30 @@ def retime(pose_fn: PoseFn, span: float, ease: Callable[[float], float]) -> Pose
     return wrapped
 
 
-def sequence(*segments: tuple[PoseFn, int]) -> PoseFn:
+def _lerp_pose(a: Pose, b: Pose, w: float) -> Pose:
+    """Blend two poses: lerp the root, its angle, and every joint angle."""
+    root = Vec2(a.root.x + (b.root.x - a.root.x) * w,
+                a.root.y + (b.root.y - a.root.y) * w)
+    out = Pose(root=root,
+               root_angle=a.root_angle + (b.root_angle - a.root_angle) * w)
+    for k in set(a.angles) | set(b.angles):
+        av, bv = a.angles.get(k, 0.0), b.angles.get(k, 0.0)
+        out.angles[k] = av + (bv - av) * w
+    return out
+
+
+def sequence(*segments: tuple[PoseFn, int], blend: float = 0.0) -> PoseFn:
     """Play pose functions back to back: [(action, frames), ...].
 
     Cartoon acting is one beat after another — crouch, then jump, then wave. This
     stitches actions into a timeline, each running in its own local frame count.
+
+    `blend` cross-fades the last `blend` frames of each beat into the start of the
+    next, easing the join — it removes the visible pop when the torso or arms jump
+    between beats (dash->punch, jump->celebrate). Total length is unchanged. Note it
+    smooths *poses*, not footwork: cross-fading two grounded beats whose feet sit at
+    different x slides a planted foot (still slip) — there, match the foot positions
+    or step, rather than lean on blend. Default 0 keeps the old hard cut.
     """
     if not segments:
         raise ValueError("sequence needs at least one (pose_fn, frames)")
@@ -773,9 +895,14 @@ def sequence(*segments: tuple[PoseFn, int]) -> PoseFn:
         acc += n
 
     def pose_fn(t: float) -> Pose:
-        for start, end, fn in bounds:
+        for i, (start, end, fn) in enumerate(bounds):
             if t < end or end == acc:
-                return fn(t - start)
+                pose = fn(t - start)
+                if blend > 0 and i + 1 < len(bounds) and t > end - blend:
+                    nxt = bounds[i + 1][2]
+                    w = ease_in_out(clamp((t - (end - blend)) / blend, 0.0, 1.0))
+                    pose = _lerp_pose(pose, nxt(t - end), w)  # next beat at its start
+                return pose
         return bounds[-1][2](t - bounds[-1][0])
 
     return pose_fn

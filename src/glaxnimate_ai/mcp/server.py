@@ -661,13 +661,19 @@ you hand to add_action(body, pose_fn, name="..."):
      FOLLOW-THROUGH: wrap any pose_fn so a loose chain (tail, cape, ear, hair)
      lags behind the motion and settles when the body stops. chain is ordered
      base->tip. Silent when the character is still, whips when it darts.
-  actions.sequence((action1, frames1), (action2, frames2), ...)  # beats in a row
+  actions.sequence((a, f1), (b, f2), ..., blend=0)  # beats in a row; blend eases the
+     seam (arms/torso) — but match foot x across grounded beats or it slides.
+  actions.locomote(body, gait, ground_y=, x0=)      # a GAIT as a pose_fn, so walk/run
+     compose in sequence: sequence((locomote(body, walk, ground_y=g, x0=90), 14), (fall(...), 20))
 
 EVERYDAY acting verbs (the non-combat ones a scene needs constantly):
   actions.celebrate(body, ground_y=, x=, pumps=2)   # arms up, pumping — joy/victory
   actions.fall(body, ground_y=, x=, facing=1)       # a pratfall, lands sitting
   actions.sit(body, ground_y=, x=, seat=)           # sit down (desk/bench); + tap = typing
   actions.tap(body, ground_y=, x=, hits=4)          # hands strike down — drum/type/keyboard
+  actions.pushup(body, ground_y=, x=, reps=3)       # horizontal plank, bobbing
+  actions.pedal(body, ground_y=, x0=, x1=)          # seated ride, legs cycling (a bike)
+  actions.fly(body, ground_y=, x0=, x1=, height=)   # airborne, wings/arms flapping
 
 COMBAT / STUNT beats (a stick figure that fights, not just walks). facing=+1 faces
 right, -1 left. Each is anticipation -> fast strike -> settle; the blow lands ~60%
@@ -710,6 +716,11 @@ PARTICLES (showers of many small bits: confetti, sparks, rain, snow, smoke)
      confetti/sparkle/smoke. fx is an effect name like \"spark\".
   emit(None, x, y, count=, spread=, drop=300, color=)     # FALLING (drop>0): rain,
      snow, falling confetti across a band `spread` wide. Deterministic per seed.
+
+CONNECTORS (a line between things: rope, leash, tightrope, fuse, tow-rope)
+  rope(x0, y0, x1, y1, sag=0)              # a static line; sag dips the middle.
+  leash(charA, boneA, charB, boneB)        # a LIVE line that tracks two moving bones
+     every frame (a dog's leash: leash('person','arm_lower','dog','neck')).
 
 CAMERA (call LAST — after the scene is built and after any shot() gating; it
 re-parents all content under one camera layer whose transform is the camera):

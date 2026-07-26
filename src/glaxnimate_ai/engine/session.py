@@ -825,6 +825,77 @@ class Session:
             )
         return f"shot {prefix!r}: f{start:g}-{end:g} ({len(want)} layer(s))"
 
+    # ------------------------------------------------------- ropes & leashes
+    def _bone_tip(self, ch: Character, bone: str, frame: float):
+        """World position of a character's bone tip at a frame — for connectors."""
+        from ..cartoon.geometry import Vec2
+        frames = ch.body.rig.solve(ch.pose_fn(float(frame)))
+        jf = frames.get(bone) or frames[ch.body.rig.root_name]
+        return Vec2(jf.tip.x, jf.tip.y)
+
+    def _rope(self, x0: float, y0: float, x1: float, y1: float, *, sag: float = 0.0,
+              color: str = "#6b5637", width: float = 3.0, name: str | None = None,
+              record: bool = True) -> str:
+        """A static line between two points — a tightrope, a clothesline, a fuse, a
+        hanging rope, a fixed leash. `sag` dips the middle (a slack rope)."""
+        from glaxnimate import utils
+
+        lname = name or f"rope.{len(self.doc.setdefault('ropes', []))}"
+        lay = self.scene.layer(lname)
+        g = lay.add_shape("Group")
+        st = g.add_shape("Stroke")
+        st.color.value = color
+        st.width.value = width
+        st.cap = st.Cap.RoundCap
+        p = g.add_shape("Path")
+        bez = p.shape.value
+        z = utils.Point(0.0, 0.0)
+        bez.add_point(utils.Point(x0, y0), z, z)
+        if sag > 0:  # a slack middle (a shallow V reads as a dip)
+            bez.line_to(utils.Point((x0 + x1) / 2, (y0 + y1) / 2 + sag))
+        bez.line_to(utils.Point(x1, y1))
+        p.shape.value = bez
+        if record:
+            self.doc["ropes"].append({"x0": x0, "y0": y0, "x1": x1, "y1": y1,
+                                      "sag": sag, "color": color, "width": width,
+                                      "name": lname})
+        return f"rope ({x0:g},{y0:g})->({x1:g},{y1:g})"
+
+    def _leash(self, a, a_bone: str, b, b_bone: str, *, color: str = "#6b5637",
+               width: float = 3.0, name: str | None = None, record: bool = True) -> str:
+        """A live connector between two characters' bones — a dog's leash, a tow-rope,
+        holding hands. A unit stroke whose transform is re-aimed every frame to span
+        bone A -> bone B (position + rotation + a real x-scale, only possible since the
+        binding fix), so it tracks both ends as they move."""
+        from glaxnimate import utils
+
+        cha, chb = self._char(a), self._char(b)
+        lname = name or f"leash.{len(self.doc.setdefault('leashes', []))}"
+        lay = self.scene.layer(lname)
+        g = lay.add_shape("Group")
+        st = g.add_shape("Stroke")
+        st.color.value = color
+        st.width.value = width
+        st.cap = st.Cap.RoundCap
+        p = g.add_shape("Path")
+        bez = p.shape.value
+        z = utils.Point(0.0, 0.0)
+        bez.add_point(utils.Point(0.0, 0.0), z, z)
+        bez.line_to(utils.Point(1.0, 0.0))  # unit line, stretched by the transform
+        p.shape.value = bez
+        for f in range(self.frames + 1):
+            pa, pb = self._bone_tip(cha, a_bone, f), self._bone_tip(chb, b_bone, f)
+            dx, dy = pb.x - pa.x, pb.y - pa.y
+            dist = math.hypot(dx, dy) or 1.0
+            g.transform.position.set_keyframe(float(f), utils.Point(pa.x, pa.y))
+            g.transform.rotation.set_keyframe(float(f), math.degrees(math.atan2(dy, dx)))
+            g.transform.scale.set_keyframe(float(f), utils.Vector2D(dist, 1.0))
+        if record:
+            self.doc["leashes"].append({"a": cha.name, "a_bone": a_bone, "b": chb.name,
+                                        "b_bone": b_bone, "color": color, "width": width,
+                                        "name": lname})
+        return f"leash {cha.name}.{a_bone} <-> {chb.name}.{b_bone}"
+
     # ------------------------------------------------------------- particles
     def _emit(self, fx, x: float, y: float, *, count: int = 12, spread: float = 120.0,
               drop: float = 0.0, start: float = 0.0, over: float = 8.0,
@@ -1243,6 +1314,8 @@ class Session:
             "add_effect": self._add_effect,
             "add_shape": self._add_shape,
             "emit": self._emit,
+            "rope": self._rope,
+            "leash": self._leash,
             "auto_fx": self._auto_fx,
             "add_moving_prop": self._add_moving_prop,
             "shot": self._shot,
@@ -1353,6 +1426,15 @@ class Session:
             if ch:
                 session._wield(ch, w["prop"], bone=w["bone"],
                                offset=tuple(w["offset"]), scale=w["scale"], record=False)
+        for rp in doc.get("ropes", []):
+            session._rope(rp["x0"], rp["y0"], rp["x1"], rp["y1"], sag=rp["sag"],
+                          color=rp["color"], width=rp["width"], name=rp["name"], record=False)
+        for ls in doc.get("leashes", []):
+            if any(c.name == ls["a"] for c in session.characters) and \
+               any(c.name == ls["b"] for c in session.characters):
+                session._leash(ls["a"], ls["a_bone"], ls["b"], ls["b_bone"],
+                               color=ls["color"], width=ls["width"], name=ls["name"],
+                               record=False)
         for th in doc.get("throws", []):
             session._throw(th["prop"], x0=th["x0"], y0=th["y0"], x1=th["x1"],
                            y1=th["y1"], apex=th["apex"], release=th["release"],
