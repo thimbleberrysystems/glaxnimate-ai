@@ -56,9 +56,11 @@ def main() -> None:
       "**method**. Mixing them up is a `TypeError`.")
     w("- Rendering at exactly `last_frame` yields an empty image (the range is "
       "exclusive at the end).")
-    w("- **`set_transition` on a scale property segfaults** (upstream binding bug; "
-      "position and rotation transitions are fine). Write scale keys linear-timed "
-      "and let the reducer add keys instead — see `engine/bake.py`.")
+    w("- **`transform.scale` is writable** (this build patches the binding bug that "
+      "made it silently no-op): set `scale.value`/`set_keyframe` with a "
+      "**`utils.Vector2D`** — not a tuple or list, which still load as the wrong "
+      "QVariant type. Eased scale via `set_transition` works too (the null-deref "
+      "segfault is fixed). Enables squash/stretch, camera zoom and smears.")
     w("- Entering `environment.Headless()` more than once per process is unstable: "
       "documents from an earlier context dangle. Use one process-wide environment "
       "(`engine/session.py`).\n")

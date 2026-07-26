@@ -69,11 +69,12 @@ API reference after any rebuild:
 **`docs/glaxnimate-api.md` is the source of truth — the online docs are a version
 behind and will mislead you** (they still show `document.main`, which no longer
 exists). The traps that cost real hours: `Layer.animation.last_frame` defaults to
-`-1` (layer invisible, blank frames, no error); **`transform.scale` cannot be
-written at all** — every type silently no-ops, so squash-and-stretch never
-reaches the document (animate a shape's `size`, or scale prop coordinates at
-draw time; `set_transition` on that same scale property additionally
-segfaults);
+`-1` (layer invisible, blank frames, no error); **`transform.scale` is writable in
+this build** — a patched binding (`~/src/glaxnimate`: `register_impl.hpp` caster
+order + `set_transition` null-guard) fixes the old silent no-op, so squash/stretch,
+camera zoom and smears reach the document — but write scale with a
+**`utils.Vector2D`**, not a tuple/list (those still marshal as the wrong QVariant
+type); eased scale via `set_transition` now works too;
 **never enter `environment.Headless()` twice in one process** and never let Qt
 documents be GC'd mid-flight — the environment is a process singleton and scenes
 are pinned (`engine/session.py`). Under the MCP server, all Qt runs on ONE worker
