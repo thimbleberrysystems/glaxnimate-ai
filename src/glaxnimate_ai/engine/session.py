@@ -652,15 +652,24 @@ class Session:
             lay.opacity.set_transition(prop_frame, tr)
 
     def _extra_audio(self):
-        """Music beds and dialogue lines, rendered onto the same bus as cues."""
+        """Music beds and dialogue lines, rendered onto the same bus as cues.
+
+        The music bed is ducked under every dialogue span so speech stays clear —
+        an underscore at full level through a line is the single biggest reason a
+        mix reads as muddy."""
         extra = []
         audio = self.doc.get("audio") or {}
+        fps = self.scene.fps
+        spans = [(e["frame"] / fps, e["frame"] / fps + e["dur"])
+                 for e in audio.get("dialogue", [])]
         music = audio.get("music")
         if music:
+            from ..audio.mix import duck
             from ..audio.music import render_music
 
             duration = self.frames / self.scene.fps
             bed = render_music(music, duration_s=duration)
+            bed = duck(bed, spans, level=0.28)  # drop under dialogue
             extra.append((0.0, bed, music.get("gain", 0.25), 0.0))
         for entry in audio.get("dialogue", []):
             from ..audio.voice import load_line
@@ -737,6 +746,13 @@ class Session:
     def _add_object(self, samples, *, record: bool = True, **kw):
         # Register the samples so the critic can see the object too — in v1 only
         # rig characters were checkable and a ball through the floor was invisible.
+        if "name" in kw:  # accept name= like add_character, not just layer_name=
+            kw.setdefault("layer_name", kw.pop("name"))
+        allowed = {"shape", "size", "color", "layer_name", "stats"}
+        bad = set(kw) - allowed
+        if bad:
+            raise TypeError(f"add_object got unexpected argument(s) {sorted(bad)}; "
+                            f"valid: name/layer_name, shape, size, color")
         samples = list(samples)
         size = kw.get("size")
         radius = (size.y / 2.0) if size is not None else 40.0
@@ -808,6 +824,114 @@ class Session:
                 {"prefix": prefix, "start": float(start), "end": float(end)}
             )
         return f"shot {prefix!r}: f{start:g}-{end:g} ({len(want)} layer(s))"
+
+    # ------------------------------------------------------------- particles
+    def _emit(self, fx, x: float, y: float, *, count: int = 12, spread: float = 120.0,
+              drop: float = 0.0, start: float = 0.0, over: float = 8.0,
+              size: float = 1.0, color: str = "#8fbfe0", seed: int = 0,
+              record: bool = True) -> str:
+        """Emit a shower of many small particles — confetti, sparks, rain, snow.
+
+        `drop=0` bursts them in place, scattered within `spread` (confetti pop,
+        sparkle, a puff of smoke — pass an fx name like "spark"). `drop>0` makes them
+        FALL that many px from a band `spread` wide (rain, snow, falling confetti —
+        `fx` is then an inline shape or a colour). Particles stagger over `over`
+        frames. Deterministic in `seed`, so it saves and replays identically.
+        """
+        import random
+
+        from ..cartoon.effects import resolve_fx
+        from ..cartoon.geometry import Vec2
+        from .bake import bake_effect, bake_prop_samples
+
+        rng = random.Random(seed)
+        base = f"emit.{len(self.doc.setdefault('emits', []))}"
+        if drop > 0.0:  # falling particles
+            shape = fx if isinstance(fx, dict) else {"shapes": [
+                {"type": "ellipse", "cx": 0, "cy": 0, "w": 3.5 * size,
+                 "h": 9 * size, "color": color}]}
+            for i in range(count):
+                px = x + rng.uniform(-spread, spread)
+                rel = int(start + rng.uniform(0, over))
+                span = max(self.frames - rel, 1)
+                spd = rng.uniform(0.75, 1.25)
+                from ..cartoon.motion import Sample
+                samples = []
+                for f in range(int(span) + 1):
+                    s = min(f / span * spd, 1.0)
+                    samples.append(Sample(int(rel + f), Vec2(px, y + drop * s),
+                                          scale=Vec2(1, 1), angle=0.0))
+                bake_prop_samples(self.scene, shape, samples, layer_name=f"{base}.{i}")
+        else:  # scattered burst of an effect
+            data = fx if isinstance(fx, dict) else resolve_fx(fx)
+            for i in range(count):
+                ang = rng.uniform(0, 2 * math.pi)
+                r = rng.uniform(0, spread)
+                px, py = x + math.cos(ang) * r, y + math.sin(ang) * r
+                bake_effect(self.scene, data, x=px, y=py,
+                            start=start + rng.uniform(0, over), layer_name=f"{base}.{i}")
+        if record:
+            self.doc["emits"].append({
+                "fx": fx if isinstance(fx, str) else (fx if isinstance(fx, dict) else str(fx)),
+                "x": x, "y": y, "count": count, "spread": spread, "drop": drop,
+                "start": start, "over": over, "size": size, "color": color, "seed": seed,
+            })
+        return f"emitted {count} particle(s) at ({x:g}, {y:g})"
+
+    # ---------------------------------------------------- free-floating shapes
+    def _add_shape(self, shapes, x: float, y: float, *, name: str | None = None,
+                   scale: float = 1.0, pulse: tuple | None = None, spin: float = 0.0,
+                   appear: float = 0.0, record: bool = True) -> str:
+        """Place a free-floating prop at (x, y) — not pinned to the ground, not held.
+
+        This is how a scene gets a heart, a sign, a chart, a hat, a drum, a speech
+        placard: anything that is neither scenery nor a puppet. `shapes` is an inline
+        list / {"shapes": [...]} of prop-schema shapes, or a saved prop name. Options:
+        `pulse=(lo, hi, cycles)` beats the scale (a heart); `spin` rotates it;
+        `appear` pops it in at a frame (a reveal). Screen coords, y down.
+        """
+        from glaxnimate import model, utils
+
+        from . import props as P
+
+        if isinstance(shapes, list):
+            data = {"shapes": shapes}
+        elif isinstance(shapes, dict):
+            data = shapes
+        else:
+            data = assets.load_prop(shapes)
+        lname = name or f"shape.{len(self.doc.setdefault('shapes', []))}"
+        lay = self.scene.layer(lname)
+        g = lay.add_shape("Group")
+        P.draw_prop(g, data, x=0.0, ground_y=0.0)
+        g.transform.position.value = utils.Point(float(x), float(y))
+
+        base = float(scale)
+        if pulse:
+            lo, hi, cycles = pulse
+            for f in range(0, self.frames + 1, 2):  # sample the beat
+                phase = 0.5 + 0.5 * math.sin(2.0 * math.pi * cycles * f / max(self.frames, 1))
+                sc = base * (lo + (hi - lo) * phase)
+                g.transform.scale.set_keyframe(float(f), utils.Vector2D(sc, sc))
+        elif base != 1.0:
+            g.transform.scale.value = utils.Vector2D(base, base)
+        if spin:
+            g.transform.rotation.set_keyframe(0.0, 0.0)
+            g.transform.rotation.set_keyframe(float(self.frames), float(spin))
+        if appear and appear > 0:
+            lay.opacity.set_keyframe(0.0, 0.0)
+            tr = model.KeyframeTransition()
+            tr.hold = True
+            lay.opacity.set_transition(0.0, tr)
+            lay.opacity.set_keyframe(float(appear), 1.0)
+
+        if record:
+            self.doc["shapes"].append({
+                "shapes": data["shapes"], "x": x, "y": y, "scale": scale,
+                "pulse": list(pulse) if pulse else None, "spin": spin,
+                "appear": appear, "name": lname,
+            })
+        return f"shape {lname!r} at ({x:g}, {y:g})"
 
     # ------------------------------------------------------------------ camera
     def _world(self):
@@ -1115,6 +1239,8 @@ class Session:
             "scenery": self._scenery,
             "add_sound": self._add_sound,
             "add_effect": self._add_effect,
+            "add_shape": self._add_shape,
+            "emit": self._emit,
             "auto_fx": self._auto_fx,
             "add_moving_prop": self._add_moving_prop,
             "shot": self._shot,
@@ -1210,6 +1336,16 @@ class Session:
                               start=e["frame"], layer_name=e.get("layer", "fx"))
             if e.get("auto"):
                 session.fx_layers.append(lay)
+        for sp in doc.get("shapes", []):
+            session._add_shape(
+                sp["shapes"], sp["x"], sp["y"], name=sp["name"], scale=sp["scale"],
+                pulse=tuple(sp["pulse"]) if sp["pulse"] else None, spin=sp["spin"],
+                appear=sp["appear"], record=False)
+        for em in doc.get("emits", []):
+            session._emit(
+                em["fx"], em["x"], em["y"], count=em["count"], spread=em["spread"],
+                drop=em["drop"], start=em["start"], over=em["over"], size=em["size"],
+                color=em["color"], seed=em["seed"], record=False)
         for w in doc.get("wields", []):
             ch = next((c for c in session.characters if c.name == w["character"]), None)
             if ch:

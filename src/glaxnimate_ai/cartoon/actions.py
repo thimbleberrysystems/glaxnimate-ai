@@ -32,6 +32,8 @@ __all__ = [
     # combat / stunt beats — a stick figure that fights, not just walks
     "punch", "kick", "dash", "flip", "swing", "block", "knockback", "land",
     "line_of_action",
+    # everyday acting verbs
+    "celebrate", "fall", "sit", "tap",
     # snap-timing toolkit — the difference between snappy and floaty
     "hold", "hitstop", "retime",
 ]
@@ -599,6 +601,112 @@ def land(body: Body, *, ground_y: float, x: float = 0.0, frames: int = 14,
         # near arm reaches down toward the ground on the deep crouch (the hero pose)
         _set(pose, body, "arm_upper", -25.0 - 40.0 * crouch)
         _set(pose, body, "arm_lower", 30.0 * crouch)
+        return pose
+
+    return pose_fn
+
+
+# ================================================================ everyday acting
+# The non-combat verbs a scene needs constantly: cheer, take a pratfall, sit down,
+# tap out a rhythm. Same pose_fn contract, same lint-clean discipline.
+
+
+def celebrate(body: Body, *, ground_y: float, x: float = 0.0, frames: int = 30,
+              pumps: int = 2) -> PoseFn:
+    """Both arms thrown up and pumping, with a small bounce — joy, victory, a goal.
+
+    Stays on the spot (no skating), the feet planted; the bounce is a crouch that
+    springs. The single most-asked-for reaction after a walk."""
+    def pose_fn(t: float) -> Pose:
+        p = clamp(t / frames, 0.0, 1.0)
+        pump = abs(math.sin(math.pi * pumps * p))
+        pose = _stance(body, ground_y, x, crouch=0.14 * (1.0 - pump))
+        for a in ("arm_upper", "arm_upper_far"):
+            _set(pose, body, a, -150.0 + 22.0 * pump)   # up, pumping
+        for a in ("arm_lower", "arm_lower_far"):
+            _set(pose, body, a, 15.0 + 10.0 * pump)
+        _set(pose, body, "spine", 2.0 * math.sin(math.pi * pumps * 2 * p))
+        return pose
+
+    return pose_fn
+
+
+def fall(body: Body, *, ground_y: float, x: float = 0.0, facing: float = 1.0,
+         frames: int = 24) -> PoseFn:
+    """A pratfall: the feet slip out, the body rotates back and drops, then settles
+    sitting on the ground — the banana-peel classic.
+
+    Airborne through the fall (feet up, so nothing skates), landing hips-down. The
+    root rotation is the whole gag; the legs sprawl forward."""
+    hip = body.hip_height
+    def pose_fn(t: float) -> Pose:
+        p = clamp(t / frames, 0.0, 1.0)
+        if p < 0.2:                                   # the slip — a quick wobble
+            s = ease_in(p / 0.2)
+            rot, drop = -10.0 * s, 0.0
+        elif p < 0.55:                                # fall back and down onto the seat
+            s = ease_in((p - 0.2) / 0.35, power=1.5)
+            rot, drop = (-10.0 - 28.0 * s), 0.62 * hip * s
+        else:                                         # landed sitting, small bounce
+            s = ease_out((p - 0.55) / 0.45)
+            rot = -38.0
+            drop = 0.62 * hip + 0.03 * hip * math.sin(math.pi * s)
+        pose = _stance(body, ground_y, x, root_angle=rot * facing, lift=-drop,
+                       plant=False)
+        # legs stick out forward: airborne while falling, feet resting on the floor
+        # once seated — IK keeps them from ever digging below the ground line.
+        landed = clamp((p - 0.4) / 0.3, 0.0, 1.0)
+        frames_solved = body.rig.solve(pose)
+        for up_n, lo_n in _leg_pairs(body):
+            hipj = frames_solved[up_n].origin
+            fy = ground_y - 0.42 * hip * (1.0 - landed)
+            _ik_foot_to(body, pose, frames_solved, up_n, lo_n,
+                        Vec2(hipj.x + 0.52 * hip * facing, fy))
+        for a in ("arm_upper", "arm_upper_far"):
+            _set(pose, body, a, -34.0 * facing)
+        return pose
+
+    return pose_fn
+
+
+def sit(body: Body, *, ground_y: float, x: float = 0.0, seat: float | None = None,
+        frames: int = 18) -> PoseFn:
+    """Lower into a seated pose — hips drop, feet forward on the floor, knees bent.
+
+    For a desk, a bench, a campfire. `seat` is the hip height when seated (defaults
+    to about half standing height). Feet stay planted at a fixed spot, so it lints
+    clean; pair with `tap` for typing or a held prop for a mug by the fire."""
+    hip = body.hip_height
+    seat_h = seat if seat is not None else hip * 0.5
+    def pose_fn(t: float) -> Pose:
+        p = clamp(t / frames, 0.0, 1.0)
+        cur = hip + (seat_h - hip) * ease_in_out(p)   # standing -> seated
+        pose = Pose(root=Vec2(x, ground_y - cur), root_angle=0.0)
+        frames_solved = body.rig.solve(pose)
+        for up_n, lo_n in _leg_pairs(body):           # feet planted, forward
+            hipj = frames_solved[up_n].origin
+            _ik_foot_to(body, pose, frames_solved, up_n, lo_n,
+                        Vec2(hipj.x + 0.28 * hip, ground_y))
+        return pose
+
+    return pose_fn
+
+
+def tap(body: Body, *, ground_y: float, x: float = 0.0, facing: float = 1.0,
+        hits: int = 4, frames: int = 24) -> PoseFn:
+    """Hands strike downward in alternation — drumming, typing, hammering a keyboard.
+
+    The two hands trade off (one up while the other comes down), the rhythm set by
+    `hits`. Put an sfx or an effect on each downbeat. Combine with `sit` for typing
+    at a desk, or leave standing for a drummer."""
+    def pose_fn(t: float) -> Pose:
+        p = clamp(t / frames, 0.0, 1.0)
+        strike = abs(math.sin(math.pi * hits * p))
+        pose = _stance(body, ground_y, x, lean=5.0 * facing)
+        _set(pose, body, "arm_upper", facing * (-38.0 - 24.0 * strike))
+        _set(pose, body, "arm_lower", facing * (34.0 + 42.0 * strike))
+        _set(pose, body, "arm_upper_far", facing * (-38.0 - 24.0 * (1.0 - strike)))
+        _set(pose, body, "arm_lower_far", facing * (34.0 + 42.0 * (1.0 - strike)))
         return pose
 
     return pose_fn

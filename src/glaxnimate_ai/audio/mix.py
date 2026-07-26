@@ -57,6 +57,28 @@ class MixResult:
     spans: list = field(default_factory=list)  # (start_s, end_s) per cue
 
 
+def duck(bed: np.ndarray, spans: list[tuple[float, float]], *, sr: int = SAMPLE_RATE,
+         level: float = 0.3, ramp_s: float = 0.09) -> np.ndarray:
+    """Sidechain-duck `bed` to `level` during each (start, end) span, with short
+    ramps — so a music bed drops out from under dialogue and the speech stays clear.
+
+    The model cannot hear that its underscore is masking the line; ducking is the
+    arithmetic that keeps dialogue intelligible without it having to. Ramps avoid a
+    click at each dip. Spans in seconds.
+    """
+    if not spans or len(bed) == 0:
+        return bed
+    env = np.ones(len(bed), dtype=np.float32)
+    for a, b in spans:
+        i0, i1 = max(0, int(a * sr)), min(len(bed), int(b * sr))
+        if i1 > i0:
+            env[i0:i1] = level
+    k = max(int(ramp_s * sr), 1)
+    if k > 1:  # box-smooth the gain envelope into attack/release ramps
+        env = np.convolve(env, np.ones(k, dtype=np.float32) / k, mode="same")
+    return (bed * env).astype(bed.dtype)
+
+
 def render_cues(
     cues: list[Cue],
     *,

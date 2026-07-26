@@ -663,6 +663,12 @@ you hand to add_action(body, pose_fn, name="..."):
      base->tip. Silent when the character is still, whips when it darts.
   actions.sequence((action1, frames1), (action2, frames2), ...)  # beats in a row
 
+EVERYDAY acting verbs (the non-combat ones a scene needs constantly):
+  actions.celebrate(body, ground_y=, x=, pumps=2)   # arms up, pumping — joy/victory
+  actions.fall(body, ground_y=, x=, facing=1)       # a pratfall, lands sitting
+  actions.sit(body, ground_y=, x=, seat=)           # sit down (desk/bench); + tap = typing
+  actions.tap(body, ground_y=, x=, hits=4)          # hands strike down — drum/type/keyboard
+
 COMBAT / STUNT beats (a stick figure that fights, not just walks). facing=+1 faces
 right, -1 left. Each is anticipation -> fast strike -> settle; the blow lands ~60%
 through, so put an fx/sfx cue there. String them with actions.sequence:
@@ -693,6 +699,17 @@ EFFECTS (the visual juice: dust, impact flashes, speed lines, sparks)
      with a hit sfx there and hitstop on the beat -> the whole hit lands on one frame.
   New effects are fx assets (save_asset(\"fx\",...)): prop-schema shapes + an
   envelope {lifespan, grow:[from,to], fade, spin}. Grows via real transform.scale.
+
+FLOATING SHAPES (a prop that is neither scenery nor held: heart, sign, chart, hat)
+  add_shape(shapes, x, y, pulse=(lo,hi,cycles), spin=, appear=)  # place at (x,y),
+     not ground-pinned. pulse beats the scale (a heart); appear pops it in (reveal).
+     shapes is an inline [{...}] prop-schema list or a saved prop name.
+
+PARTICLES (showers of many small bits: confetti, sparks, rain, snow, smoke)
+  emit(fx, x, y, count=, spread=, start=, over=)          # burst in place (drop=0):
+     confetti/sparkle/smoke. fx is an effect name like \"spark\".
+  emit(None, x, y, count=, spread=, drop=300, color=)     # FALLING (drop>0): rain,
+     snow, falling confetti across a band `spread` wide. Deterministic per seed.
 
 CAMERA (call LAST — after the scene is built and after any shot() gating; it
 re-parents all content under one camera layer whose transform is the camera):

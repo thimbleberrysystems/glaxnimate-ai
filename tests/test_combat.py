@@ -31,9 +31,15 @@ ALL_BEATS = {
     "block": lambda b: actions.block(b, ground_y=GROUND, x=170, frames=12),
     "knockback": lambda b: actions.knockback(b, ground_y=GROUND, x=200, frames=16),
     "land": lambda b: actions.land(b, ground_y=GROUND, x=170, frames=14),
+    # everyday acting verbs
+    "celebrate": lambda b: actions.celebrate(b, ground_y=GROUND, x=170, frames=26),
+    "fall": lambda b: actions.fall(b, ground_y=GROUND, x=200, frames=24),
+    "sit": lambda b: actions.sit(b, ground_y=GROUND, x=170, frames=18),
+    "tap": lambda b: actions.tap(b, ground_y=GROUND, x=170, frames=24),
 }
 FRAMES = {"punch": 16, "kick": 18, "dash": 14, "flip": 26, "swing": 18,
-          "block": 12, "knockback": 16, "land": 14}
+          "block": 12, "knockback": 16, "land": 14,
+          "celebrate": 26, "fall": 24, "sit": 18, "tap": 24}
 
 
 @pytest.mark.parametrize("name", list(ALL_BEATS))
