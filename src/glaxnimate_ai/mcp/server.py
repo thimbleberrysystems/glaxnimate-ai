@@ -687,6 +687,30 @@ FIGHT FX (the effects language of real stick fights — Xiao Xiao / DBZ / Madnes
      aimed at each other + add_effect(\"impact\") between them = a beam struggle.
   wield(char, prop, spin=720)                # twirl a staff/nunchuck in the hand.
 
+PHYSICS RAGDOLL (real simulation, not a scripted arc):
+  ragdoll(body, x, launch=(vx,vy), spin=)    # the figure goes limp and is thrown:
+     tumbles under gravity, bones stay rigid, settles on the ground. -> add_action.
+     It genuinely slides as it tumbles, so a ragdoll is NOT slip-clean (it is physics).
+
+PARKOUR (vertical surfaces):
+  actions.wall_run(body, wall_x=, y0=, y1=, facing=1)   # run up a wall, feet on it
+  actions.wall_kick(body, wall_x=, y=, x1=, facing=1)   # kick off a wall, launch away
+
+GUNPLAY:
+  actions.aim(body, ground_y=, x=, target_x=, target_y=)  # point the arm at a target
+  shoot(shooter, target_x, target_y, frame)  # muzzle flash + tracer + impact + crack
+
+CLONES (the duplication technique):
+  clones(body, lambda i: <pose_fn for clone i>, count, name=\"clone\")  # N real copies,
+     e.g. clones(f, lambda i: actions.punch(f, ground_y=ground, x=110+i*120), 4)
+
+SCREENSHOT / ANIMATOR-VS-ANIMATION (fight on a real screenshot):
+  backdrop(\"shot.png\")                   # a screenshot/image as the canvas. Call FIRST.
+  cursor(points, frames=)                # a mouse cursor sweeping a path of (x,y) points
+  drag(body, points, grab=\"head\")        # the cursor GRABS the figure: a ragdoll pinned
+     to the same path, dangling and flailing as it's hauled around. -> add_action.
+     Then it uses UI elements as weapons via add_moving_prop/throw (a flung window).
+
 COMBAT / STUNT beats (a stick figure that fights, not just walks). facing=+1 faces
 right, -1 left. Each is anticipation -> fast strike -> settle; the blow lands ~60%
 through, so put an fx/sfx cue there. String them with actions.sequence:

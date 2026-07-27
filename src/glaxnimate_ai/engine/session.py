@@ -23,13 +23,15 @@ import math
 import sys
 import time
 import traceback
+from pathlib import Path
 from contextlib import ExitStack, redirect_stdout
 from dataclasses import dataclass, field
 from typing import Any
 
 from glaxnimate import environment
 
-from ..cartoon import actions, assets, geometry, motion, presets, principles, rig
+from ..cartoon import (
+    actions, assets, geometry, motion, physics, presets, principles, rig)
 from ..cartoon.gait import Gait, pose_at
 from ..cartoon.presets import Body, lineart
 from . import scene_doc as SD
@@ -1245,6 +1247,136 @@ class Session:
             })
         return f"camera move f{start:g}-{end:g}: zoom {zoom:g}x"
 
+    # ------------------------------------------------- screenshot backdrop (AvA)
+    def _backdrop(self, image_path, *, fit: bool = True, opacity: float = 1.0,
+                  record: bool = True) -> str:
+        """Set a screenshot (or any image) as the backdrop — the Animator-vs-Animation
+        canvas: a desktop, a webpage, a game, over which the stick figures act and
+        which they fight *with* (drag its windows, ride the cursor). Call it FIRST so
+        it sits behind everything. `fit` scales it to fill the canvas."""
+        from glaxnimate import utils
+
+        bmp = self.scene.document.assets.add_image_file(str(image_path), True)
+        lay = self.scene.layer("backdrop")
+        im = lay.add_shape("Image")
+        im.image = bmp
+        cw, ch = float(self.scene.comp.width), float(self.scene.comp.height)
+        iw, ih = float(getattr(bmp, "width", cw)), float(getattr(bmp, "height", ch))
+        # Image origin is its top-left; anchor at (0,0) and stretch to fill the canvas.
+        im.transform.position.value = utils.Point(0.0, 0.0)
+        if fit and iw > 0 and ih > 0:
+            im.transform.scale.value = utils.Vector2D(cw / iw, ch / ih)
+        if opacity < 1.0:
+            lay.opacity.value = opacity
+        if record:
+            self.doc["backdrop"] = {"path": str(image_path), "fit": fit,
+                                    "opacity": opacity}
+        return f"backdrop {image_path}"
+
+    def _path_fn(self, points, span: float):
+        """A polyline sampler: point at fraction f/span along `points` (a (x,y) list)."""
+        from ..cartoon.geometry import Vec2
+        pts = [Vec2(float(a), float(b)) for a, b in points]
+
+        def at(f):
+            if len(pts) == 1:
+                return pts[0]
+            s = max(0.0, min(1.0, f / max(span, 1))) * (len(pts) - 1)
+            i = int(s)
+            if i >= len(pts) - 1:
+                return pts[-1]
+            a, b, frac = pts[i], pts[i + 1], s - i
+            return Vec2(a.x + (b.x - a.x) * frac, a.y + (b.y - a.y) * frac)
+        return at
+
+    def _cursor(self, points, *, start: float = 0.0, frames: int | None = None,
+                name: str = "cursor", record: bool = True) -> str:
+        """A mouse cursor that sweeps along `points` — the antagonist of Animator vs
+        Animation. Pair with drag() so it grabs and hauls the figure around."""
+        from ..cartoon.geometry import Vec2
+        from ..cartoon.motion import Sample
+
+        n = frames or self.frames
+        span = n - start
+        path = self._path_fn(points, span)
+        arrow = [
+            {"type": "polygon", "points": [[0, 0], [0, 27], [7, 20], [12, 31],
+                                            [18, 29], [12, 18], [21, 18]], "color": "#111"},
+            {"type": "polygon", "points": [[2, 4], [2, 22], [7, 17], [11, 26],
+                                            [14, 25], [10, 15], [16, 15]], "color": "#fff"},
+        ]
+        samples = [Sample(int(start + i), path(i), scale=Vec2(1, 1), angle=0.0)
+                   for i in range(int(span) + 1)]
+        self._add_moving_prop(arrow, samples, name=name, record=record)
+        return f"cursor along {len(points)} point(s)"
+
+    def _drag(self, body, points, *, grab: str = "head", frames: int | None = None,
+              start: float = 0.0):
+        """The figure grabbed and dragged by the cursor: a ragdoll pinned at `grab`
+        (a joint, default the head) to the cursor path, dangling and flailing as it is
+        hauled around — the Animator-vs-Animation manhandling. Returns a pose_fn for
+        add_action; drive the matching cursor() along the SAME points."""
+        from ..cartoon.geometry import Vec2
+        from ..cartoon.rig import Pose
+        from ..cartoon import physics
+
+        n = frames or self.frames
+        span = n - start
+        path = self._path_fn(points, span)
+
+        def pin_path(f):
+            return path(f - start) if f >= start else path(0)
+
+        p0 = path(0)
+        pose0 = Pose(root=Vec2(p0.x, p0.y + body.hip_height * 0.5), root_angle=0.0)
+        return physics.ragdoll(body, pose0, ground_y=self.ground_y, frames=n,
+                               pin=grab, pin_path=pin_path)
+
+    # ----------------------------------------------------------- gun & clones
+    def _shoot(self, shooter, target_x: float, target_y: float, frame: float, *,
+               bone: str = "arm_lower", color: str = "#ffd766") -> str:
+        """Fire a shot from a character's hand at (target_x, target_y): a muzzle flash
+        at the barrel, a bright tracer to the target, an impact where it lands, and a
+        crack of sound — all on `frame`. Pair with actions.aim so the arm points the
+        right way."""
+        ch = self._char(shooter)
+        bp = self._bone_tip(ch, bone, frame)
+        self._add_effect("spark", bp.x, bp.y, frame)                 # muzzle flash
+        self._beam(bp.x, bp.y, target_x, target_y, frame, frame + 1,   # tracer
+                   color=color, core="#ffffff", width=6, opacity=0.9)
+        self._add_effect("impact", target_x, target_y, frame + 1)     # hit
+        self._add_sound("pop", frame)
+        return f"{ch.name} shoots @f{frame:g} -> ({target_x:g},{target_y:g})"
+
+    def _clones(self, body, factory, count: int, *, name: str = "clone",
+                face: str | dict | None = None) -> str:
+        """The duplication technique: spawn `count` copies of a character, each driven
+        by factory(i) -> pose_fn (so each clone can be at its own place, phase or
+        beat). Every clone is a real registered character the critic can inspect."""
+        for i in range(int(count)):
+            self._add_action(body, factory(i), name=f"{name}{i}", face=face)
+        return f"{count} clone(s) '{name}0..{int(count) - 1}'"
+
+    # -------------------------------------------------------- physics ragdoll
+    def _ragdoll(self, body, x: float, *, y: float | None = None,
+                 launch: tuple = (0.0, 0.0), spin: float = 0.0,
+                 frames: int | None = None, from_pose=None):
+        """A simulated ragdoll pose_fn: the figure goes limp and is thrown by `launch`
+        (vx, vy) + `spin`, tumbling and settling under real gravity + ground collision.
+
+        Hand it to add_action. `launch` is the velocity at the moment of losing
+        control — a hit or a throw. Feet genuinely slide as it tumbles (it is physics,
+        not a controlled walk), so unlike the acting verbs a ragdoll is not slip-clean.
+        """
+        from ..cartoon import physics
+        from ..cartoon.geometry import Vec2
+        from ..cartoon.rig import Pose
+
+        pose0 = from_pose or Pose(root=Vec2(x, self.ground_y - body.hip_height),
+                                  root_angle=0.0)
+        return physics.ragdoll(body, pose0, ground_y=self.ground_y,
+                               frames=frames or self.frames, launch=launch, spin=spin)
+
     # ----------------------------------------- two-figure & props-as-toys (WS4)
     def _char(self, character) -> Character:
         """Resolve a character by name or object, with a teaching error."""
@@ -1460,6 +1592,9 @@ class Session:
             "load_face": assets.load_face,
             "set_expression": self._set_expression,
             "scenery": self._scenery,
+            "backdrop": self._backdrop,
+            "cursor": self._cursor,
+            "drag": self._drag,
             "add_sound": self._add_sound,
             "add_effect": self._add_effect,
             "add_shape": self._add_shape,
@@ -1489,6 +1624,10 @@ class Session:
             "wield": self._wield,
             "throw": self._throw,
             "clash": self._clash,
+            "ragdoll": self._ragdoll,
+            "shoot": self._shoot,
+            "clones": self._clones,
+            "physics": physics,
             "scene": self.scene,
             "ground": self.ground_y,
             "frames": self.frames,
@@ -1520,6 +1659,10 @@ class Session:
         )
         session.doc = doc  # the replayed doc IS the doc; don't re-record
 
+        bd = doc.get("backdrop")            # first, so it sits behind everything
+        if bd and Path(bd["path"]).exists():
+            session._backdrop(bd["path"], fit=bd["fit"], opacity=bd["opacity"],
+                              record=False)
         for sc in doc["scenery"]:
             session._scenery(sc["template"], layer_name=sc["layer"],
                              record=False, **sc["params"])

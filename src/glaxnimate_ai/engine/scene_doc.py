@@ -56,7 +56,7 @@ def empty_doc(*, width: int, height: int, frames: int, fps: float,
         "ground_y": ground_y,
         "scenery": [], "props": [], "characters": [], "objects": [], "shots": [],
         "effects": [], "shapes": [], "emits": [], "ropes": [], "leashes": [],
-        "overlays": [],
+        "overlays": [], "backdrop": None,
         "audio": {"cues": [], "music": None, "dialogue": []},
     }
 
@@ -82,6 +82,7 @@ def load_doc(doc_id: str) -> dict:
     doc.setdefault("ropes", [])
     doc.setdefault("leashes", [])
     doc.setdefault("overlays", [])
+    doc.setdefault("backdrop", None)
     if doc.get("version") != VERSION:
         raise ValueError(
             f"scene {doc_id!r} has version {doc.get('version')!r}; "

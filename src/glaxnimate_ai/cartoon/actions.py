@@ -35,6 +35,7 @@ __all__ = [
     "line_of_action",
     # everyday acting verbs
     "celebrate", "fall", "sit", "tap", "pushup", "pedal", "fly", "tossed",
+    "wall_run", "wall_kick", "aim",
     # snap-timing toolkit — the difference between snappy and floaty
     "hold", "hitstop", "retime",
 ]
@@ -772,6 +773,87 @@ def pedal(body: Body, *, ground_y: float, x0: float = 0.0, x1: float = 200.0,
                         Vec2(cx + r * math.cos(ang), cy + r * math.sin(ang)))
         for a in ("arm_upper", "arm_upper_far"):           # arms reach to the bars
             _set(pose, body, a, -70.0)
+        return pose
+
+    return pose_fn
+
+
+def wall_run(body: Body, *, wall_x: float, y0: float, y1: float, facing: float = 1.0,
+             steps: int = 3, frames: int = 18) -> PoseFn:
+    """Run up a vertical wall — the Xiao Xiao parkour staple. The body is nearly
+    horizontal (perpendicular to the wall), feet driving against it, sprinting
+    upward from `y0` to `y1`. `facing` +1 = wall on the right. Feet are off the
+    ground plane the whole time, so it lints clean."""
+    hip = body.hip_height
+    def pose_fn(t: float) -> Pose:
+        p = clamp(t / frames, 0.0, 1.0)
+        gy = y0 + (y1 - y0) * ease_out(p)              # decelerating climb
+        # body just off the wall, leaning back from it, feet driving against it
+        pose = Pose(root=Vec2(wall_x - 0.45 * hip * facing, gy),
+                    root_angle=-28.0 * facing)
+        _set(pose, body, "spine", -6.0 * facing)
+        frames_solved = body.rig.solve(pose)
+        cyc = 2.0 * math.pi * steps * p
+        for i, (up_n, lo_n) in enumerate(_leg_pairs(body)):   # feet cycle on the wall
+            ph = cyc + (0.0 if i == 0 else math.pi)
+            fy = gy + hip * (0.15 + 0.35 * (0.5 + 0.5 * math.sin(ph)))
+            _ik_foot_to(body, pose, frames_solved, up_n, lo_n, Vec2(wall_x, fy))
+        for a in ("arm_upper", "arm_upper_far"):        # arms pump
+            _set(pose, body, a, facing * (-30.0 + 35.0 * math.sin(cyc + math.pi)))
+        return pose
+
+    return pose_fn
+
+
+def wall_kick(body: Body, *, wall_x: float, y: float, x1: float, facing: float = 1.0,
+              frames: int = 16) -> PoseFn:
+    """Kick off a wall and launch away — plant on the wall (body vertical against it),
+    then spring off in an arc to `x1`. The dismount from a wall-run. `facing` +1 = wall
+    on the right, so it launches left."""
+    hip = body.hip_height
+    x0 = wall_x - 0.18 * hip * facing
+    def pose_fn(t: float) -> Pose:
+        p = clamp(t / frames, 0.0, 1.0)
+        if p < 0.3:                                    # coil against the wall
+            s = ease_out(p / 0.3)
+            gx, gy, rot = x0, y, -74.0 * facing * (1 - 0.3 * s)
+            crouch_arm = -30.0
+        else:                                          # spring away in an arc
+            s = ease_in((p - 0.3) / 0.7, power=1.6)
+            gx = x0 + (x1 - x0) * s
+            gy = y - 0.5 * hip * math.sin(math.pi * s)  # small hop arc
+            rot = -50.0 * facing * (1 - s)
+            crouch_arm = -30.0 - 60.0 * s
+        pose = Pose(root=Vec2(gx, gy), root_angle=rot)
+        for up_n, lo_n in _leg_pairs(body):            # legs push then tuck
+            _set(pose, body, up_n, facing * 40.0)
+            _set(pose, body, lo_n, 70.0 * (1 - clamp((p - 0.3) / 0.7, 0, 1)) + 20.0)
+        for a in ("arm_upper", "arm_upper_far"):
+            _set(pose, body, a, facing * crouch_arm)
+        return pose
+
+    return pose_fn
+
+
+def aim(body: Body, *, ground_y: float, x: float = 0.0, target_x: float = 100.0,
+        target_y: float | None = None, frames: int = 12, arm: str = "arm_upper",
+        forearm: str = "arm_lower") -> PoseFn:
+    """Stand and aim the near arm at a target (a gun, a bow, a pointing finger). The
+    arm locks onto (target_x, target_y); pair with `shoot()` for the muzzle flash and
+    the bullet."""
+    def pose_fn(t: float) -> Pose:
+        p = clamp(t / frames, 0.0, 1.0)
+        pose = _stance(body, ground_y, x, lean=4.0)
+        frames_solved = body.rig.solve(pose)
+        sh = frames_solved[arm].origin
+        ty = target_y if target_y is not None else sh.y
+        want = math.degrees(math.atan2(ty - sh.y, target_x - sh.x))  # world angle
+        j = body.rig.joints[arm]
+        parent_world = frames_solved[j.parent].angle if j.parent else pose.root_angle
+        local = want - parent_world - j.rest_angle    # inverse FK to the local angle
+        raise_amt = ease_out(clamp(p / 0.4, 0.0, 1.0))
+        _set(pose, body, arm, local * raise_amt)      # upper arm points at target
+        _set(pose, body, forearm, 0.0)                # forearm straight (down the sight)
         return pose
 
     return pose_fn
