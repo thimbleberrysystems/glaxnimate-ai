@@ -132,6 +132,7 @@ class Session:
         style: str | None = None,
         face: str | dict | None = None,
         facing: float = 1.0,
+        scale: float = 1.0,
     ) -> Character:
         """Bake a rig into the document and register it with the critic.
 
@@ -159,7 +160,7 @@ class Session:
 
         return self._bake_character(body, pose_fn, gait=gait, name=name,
                                     color=color, thickness=thickness, face=face,
-                                    facing=facing)
+                                    facing=facing, scale=scale)
 
     def _bake_character(
         self, body: Body, pose_fn, *, gait: Gait | None, name: str,
@@ -167,6 +168,7 @@ class Session:
         face: str | dict | None = None, record: bool = True,
         poses: list | None = None, face_data: dict | None = None,
         expressions: list | None = None, first: int = 0, facing: float = 1.0,
+        scale: float = 1.0,
     ) -> Character:
         """Bake + register + record. Every character path funnels through here so
         the scene document always matches what is on the canvas."""
@@ -174,7 +176,7 @@ class Session:
         bake_rig(
             self.scene, body, pose_fn, frames=self.frames, first=first,
             color=color, thickness=thickness, layer_name=name, layers_out=layers,
-            facing=facing,
+            facing=facing, scale=scale,
         )
         limb_pairs = [(li.upper, li.lower) for li in gait.limbs] if gait else []
         ch = Character(name, body, gait, pose_fn, limb_pairs=limb_pairs,
@@ -198,6 +200,7 @@ class Session:
                 "face": face_data,
                 "expressions": [],
                 "facing": facing,
+                "scale": scale,
             })
         if expressions:
             replaying = not record
@@ -303,6 +306,7 @@ class Session:
         face: str | dict | None = None,
         first: int = 0,
         facing: float = 1.0,
+        scale: float = 1.0,
     ) -> Character:
         """Bake a character driven by an arbitrary pose function (a jump, a punch).
 
@@ -310,13 +314,13 @@ class Session:
         registered so the linter and diagnostics can inspect it (contact slip,
         joint integrity, bounds all still apply). `style="lineart"` reskins as a
         stick figure, `face=` mounts a face, `facing=-1` turns it to look left,
-        exactly as `add_character` does.
+        `scale=1.6` makes a giant (or 0.6 a sprite), exactly as `add_character` does.
         """
         if style == "lineart":
             body = lineart(body)
         return self._bake_character(body, pose_fn, gait=None, name=name,
                                     color=color, thickness=thickness, face=face,
-                                    first=first, facing=facing)
+                                    first=first, facing=facing, scale=scale)
 
     # ------------------------------------------------------------------ audio
     def _add_sound(self, sfx, frame: float, *, gain: float = 1.0,
@@ -1733,7 +1737,7 @@ class Session:
                 color=rec.get("color"), thickness=rec.get("thickness"),
                 face_data=rec.get("face"), record=False,
                 expressions=[(f, a) for f, a in rec.get("expressions", [])],
-                facing=rec.get("facing", 1.0),
+                facing=rec.get("facing", 1.0), scale=rec.get("scale", 1.0),
             )
             ch.limb_pairs = [tuple(x) for x in rec.get("limbs", [])]
         for ob in doc["objects"]:

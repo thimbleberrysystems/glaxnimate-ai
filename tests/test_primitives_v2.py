@@ -163,6 +163,17 @@ def test_facing_left_mirrors_the_puppet():
     assert _char_layer(s.scene, "b").transform.position.value_at_time(0.0).x > 150
 
 
+def test_scale_makes_a_giant_and_composes_with_facing():
+    s = SessionStore().create(width=300, height=340, frames=4, ground_y=300)
+    s.run('a=stick(); b=stick()\n'
+          'add_action(a, actions.idle(a, ground_y=ground, x=90), name="a", face="stick", scale=1.6)\n'
+          'add_action(b, actions.idle(b, ground_y=ground, x=210), name="b", face="stick", facing=-1, scale=1.6)')
+    sa = _char_layer(s.scene, "a").transform.scale.value
+    sb = _char_layer(s.scene, "b").transform.scale.value
+    assert (round(sa.x, 2), round(sa.y, 2)) == (1.6, 1.6)      # giant, facing right
+    assert (round(sb.x, 2), round(sb.y, 2)) == (-1.6, 1.6)     # giant, mirrored
+
+
 def test_facing_persists_and_replays():
     s = SessionStore().create(width=300, height=340, frames=4, ground_y=300)
     s.run('b=stick()\n'

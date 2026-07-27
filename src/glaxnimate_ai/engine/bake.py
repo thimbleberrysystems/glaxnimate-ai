@@ -292,6 +292,7 @@ def bake_rig(
     stats: dict | None = None,
     layers_out: dict | None = None,
     facing: float = 1.0,
+    scale: float = 1.0,
 ) -> model.shapes.Layer:
     """Build a parented bone-layer rig and key it sparsely.
 
@@ -368,12 +369,14 @@ def bake_rig(
     n_keys += _write_scalar(root_layer.transform.rotation,
                             reduce_scalar(root_rot, tol=TOL_DEG), offset=first)
 
-    # Facing: mirror the whole puppet about its own root (the spine) with a static
-    # scale.x = -1, so the profile face and the limbs all turn to look the other
-    # way. The root position is unchanged, so the figure flips in place rather than
-    # sliding off — combine with a leftward gait to actually walk left.
-    if facing < 0:
-        root_layer.transform.scale.value = utils.Vector2D(-1.0, 1.0)
+    # Facing + scale share the one static root scale. facing<0 mirrors the whole
+    # puppet about its own root (the spine) — profile face and limbs turn together,
+    # in place (root position unchanged; pair with a leftward gait to walk left).
+    # scale grows or shrinks the whole figure about that same root — a giant, a
+    # sprite. Both ride transform.scale, writable since the binding fix.
+    if facing < 0 or scale != 1.0:
+        sign = -1.0 if facing < 0 else 1.0
+        root_layer.transform.scale.value = utils.Vector2D(sign * scale, scale)
 
     # A contact chain is the contact joint and everything above it to the root —
     # the bones whose angles decide where a planted foot actually lands.
