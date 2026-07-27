@@ -896,6 +896,149 @@ class Session:
                                         "name": lname})
         return f"leash {cha.name}.{a_bone} <-> {chb.name}.{b_bone}"
 
+    # ------------------------------------------------- fight FX (smear/aura/beam)
+    def _gate_layers(self, prefix: str, keys: list[tuple]) -> None:
+        """Set opacity keyframes on every layer named `prefix` or `prefix.*`."""
+        for sh in self.scene.comp.shapes:
+            if sh.name == prefix or sh.name.startswith(prefix + "."):
+                for f, v in keys:
+                    sh.opacity.set_keyframe(float(f), float(v))
+
+    def _afterimage(self, character, at: float, *, count: int = 3, gap: float = 2.0,
+                    opacity: float = 0.34, color: str = "#93a6c4",
+                    name: str | None = None, record: bool = True) -> str:
+        """Speed ghosts: faded frozen copies of the figure at recent poses, flashing
+        around frame `at` — the trailing after-images of a dash, a teleport, a blur-
+        fast strike. `count` ghosts, each `gap` frames further back and fainter."""
+        from .bake import bake_rig
+
+        ch = self._char(character)
+        base = name or f"ghost.{len([o for o in self.doc['overlays'] if o['kind'] == 'afterimage'])}"
+        for i in range(1, count + 1):
+            gf = max(float(at) - gap * i, 0.0)
+            gname = f"{base}.{i}"
+            frozen = (lambda g: (lambda t: ch.pose_fn(g)))(gf)   # constant pose at gf
+            bake_rig(self.scene, ch.body, frozen, frames=self.frames, color=color,
+                     layer_name=gname, joint_color=None, joint_radius=0.0)
+            fade = opacity * (1.0 - (i - 1) / (count + 1))        # older = fainter
+            self._gate_layers(gname, [(0.0, 0.0), (gf + 0.5, fade),
+                                      (float(at) + 1, fade), (float(at) + 3, 0.0)])
+        if record:
+            self.doc["overlays"].append({
+                "kind": "afterimage", "character": ch.name, "at": float(at),
+                "count": count, "gap": gap, "opacity": opacity, "color": color,
+                "name": base})
+        return f"afterimage x{count} on {ch.name} @f{at:g}"
+
+
+    def _smear(self, character, bone: str, at: float, *, span: int = 4,
+               color: str = "#e6efff", spread: float = 16.0, opacity: float = 0.55,
+               name: str | None = None, record: bool = True) -> str:
+        """A motion smear: the translucent swoosh a fast limb or blade leaves on its
+        strike frame — THE defining look of a stick fight. Samples the bone's path
+        over the last `span` frames and draws a tapered arc through it, flashing on
+        frame `at` and gone a few frames later."""
+        from glaxnimate import utils
+
+        from . import props as P
+
+        ch = self._char(character)
+        pts = [self._bone_tip(ch, bone, max(float(at) - span + i, 0.0))
+               for i in range(span + 1)]
+        top, bot = [], []
+        for i, p in enumerate(pts):
+            a, b = pts[max(i - 1, 0)], pts[min(i + 1, span)]
+            tx, ty = b.x - a.x, b.y - a.y
+            L = math.hypot(tx, ty) or 1.0
+            perx, pery = -ty / L, tx / L
+            hw = spread * math.sin(math.pi * i / span) + 1.5   # fat middle, thin ends
+            top.append([p.x + perx * hw, p.y + pery * hw])
+            bot.append([p.x - perx * hw, p.y - pery * hw])
+        poly = {"type": "polygon", "points": top + bot[::-1], "color": color}
+        lname = name or f"smear.{len([o for o in self.doc['overlays'] if o['kind'] == 'smear'])}"
+        lay = self.scene.layer(lname)
+        P.draw_prop(lay.add_shape("Group"), {"shapes": [poly]}, x=0.0, ground_y=0.0)
+        op = lay.opacity
+        op.set_keyframe(max(float(at) - 1, 0.0), 0.0)
+        op.set_keyframe(float(at), opacity)
+        op.set_keyframe(float(at) + 3, 0.0)
+        if record:
+            self.doc["overlays"].append({
+                "kind": "smear", "character": ch.name, "bone": bone, "at": float(at),
+                "span": span, "color": color, "spread": spread, "opacity": opacity,
+                "name": lname})
+        return f"smear on {ch.name}.{bone} @f{at:g}"
+
+    def _aura(self, character, *, color: str = "#ffd23f", radius: float = 48.0,
+              bone: str = "spine", start: float = 0.0, pulse: float = 6.0,
+              opacity: float = 0.4, name: str | None = None, record: bool = True) -> str:
+        """A charge-up aura: a translucent glow that rides a character and pulses —
+        the power-up halo of every energy fight. Follows `bone` each frame, swells in
+        from `start`, and beats `pulse` times."""
+        from glaxnimate import utils
+
+        from . import props as P
+
+        ch = self._char(character)
+        bone = bone if bone in ch.body.rig.joints else ch.body.rig.root_name
+        lname = name or f"aura.{len([o for o in self.doc['overlays'] if o['kind'] == 'aura'])}"
+        lay = self.scene.layer(lname)
+        g = lay.add_shape("Group")
+        P.draw_prop(g, {"shapes": [
+            {"type": "ellipse", "cx": 0, "cy": 0, "w": radius * 2, "h": radius * 2.4,
+             "color": color},
+            {"type": "ellipse", "cx": 0, "cy": 0, "w": radius, "h": radius * 1.3,
+             "color": "#ffffff"}]}, x=0.0, ground_y=0.0)
+        for f in range(self.frames + 1):
+            p = self._bone_tip(ch, bone, f)
+            beat = 0.85 + 0.28 * (0.5 + 0.5 * math.sin(2.0 * math.pi * pulse * f / max(self.frames, 1)))
+            g.transform.position.set_keyframe(float(f), utils.Point(p.x, p.y))
+            g.transform.scale.set_keyframe(float(f), utils.Vector2D(beat, beat))
+        op = lay.opacity                      # swell in from `start`
+        op.set_keyframe(max(float(start) - 1, 0.0), 0.0)
+        op.set_keyframe(float(start) + 4, opacity)
+        if record:
+            self.doc["overlays"].append({
+                "kind": "aura", "character": ch.name, "color": color, "radius": radius,
+                "bone": bone, "start": float(start), "pulse": pulse, "opacity": opacity,
+                "name": lname})
+        return f"aura on {ch.name}"
+
+    def _beam(self, x0: float, y0: float, x1: float, y1: float, start: float,
+              end: float, *, color: str = "#7fd4ff", core: str = "#ffffff",
+              width: float = 20.0, opacity: float = 0.85, name: str | None = None,
+              record: bool = True) -> str:
+        """An energy beam from (x0,y0) to (x1,y1), lit during [start,end] — a glowing
+        outer layer with a bright core. Two beams aimed at each other with an impact
+        flash at the meeting point make the classic beam struggle."""
+        from glaxnimate import utils
+
+        from . import props as P
+
+        dx, dy = x1 - x0, y1 - y0
+        dist = math.hypot(dx, dy) or 1.0
+        lname = name or f"beam.{len([o for o in self.doc['overlays'] if o['kind'] == 'beam'])}"
+        lay = self.scene.layer(lname)
+        g = lay.add_shape("Group")
+        P.draw_prop(g, {"shapes": [
+            {"type": "rect", "x": 0, "y": -width / 2, "w": 1, "h": width, "color": color},
+            {"type": "rect", "x": 0, "y": -width / 6, "w": 1, "h": width / 3, "color": core}]},
+            x=0.0, ground_y=0.0)
+        g.transform.position.value = utils.Point(x0, y0)
+        g.transform.rotation.value = math.degrees(math.atan2(dy, dx))
+        g.transform.scale.value = utils.Vector2D(dist, 1.0)   # stretch the unit beam
+        op = lay.opacity
+        op.set_keyframe(max(float(start) - 1, 0.0), 0.0)
+        op.set_keyframe(float(start), opacity)
+        op.set_keyframe(float(end), opacity)
+        op.set_keyframe(float(end) + 2, 0.0)
+        if record:
+            self.doc["overlays"].append({
+                "kind": "beam", "x0": x0, "y0": y0, "x1": x1, "y1": y1,
+                "start": float(start), "end": float(end), "color": color, "core": core,
+                "width": width, "opacity": opacity, "name": lname})
+        return f"beam ({x0:g},{y0:g})->({x1:g},{y1:g}) f{start:g}-{end:g}"
+
     # ------------------------------------------------------------- particles
     def _emit(self, fx, x: float, y: float, *, count: int = 12, spread: float = 120.0,
               drop: float = 0.0, start: float = 0.0, over: float = 8.0,
@@ -1113,7 +1256,7 @@ class Session:
         return ch
 
     def _wield(self, character, prop, *, bone: str = "arm_lower",
-               offset: tuple | None = None, scale: float = 1.0,
+               offset: tuple | None = None, scale: float = 1.0, spin: float = 0.0,
                record: bool = True) -> str:
         """Put a prop in a character's hand: it rides the bone for the whole clip.
 
@@ -1121,7 +1264,8 @@ class Session:
         prop is drawn once into the hand bone's layer, so the bone's transform swings
         it for free (a sword follows a `swing`, a torch bobs with a walk). `bone`
         defaults to the near forearm; `offset` defaults to the bone tip (the hand).
-        Pair with a `swing` beat for a weapon strike, or `throw` to let it go.
+        `spin` (total degrees over the clip) twirls the prop in the hand — a staff or
+        nunchuck spin. Pair with a `swing` beat for a weapon strike, or `throw`.
         """
         from glaxnimate import utils
 
@@ -1139,10 +1283,14 @@ class Session:
         from . import props as P
         P.draw_prop(g, data, x=0.0, ground_y=0.0, scale=scale)
         g.transform.position.value = utils.Point(float(ox), float(oy))
+        if spin:  # twirl the prop in the hand (staff/nunchuck)
+            g.transform.rotation.set_keyframe(0.0, 0.0)
+            g.transform.rotation.set_keyframe(float(self.frames), float(spin))
         if record:
             self.doc.setdefault("wields", []).append({
                 "character": ch.name, "prop": prop if isinstance(prop, str) else data,
                 "bone": bone, "offset": [float(ox), float(oy)], "scale": scale,
+                "spin": spin,
             })
         return f"{ch.name} wields a prop on {bone}"
 
@@ -1318,6 +1466,10 @@ class Session:
             "emit": self._emit,
             "rope": self._rope,
             "leash": self._leash,
+            "smear": self._smear,
+            "aura": self._aura,
+            "beam": self._beam,
+            "afterimage": self._afterimage,
             "auto_fx": self._auto_fx,
             "add_moving_prop": self._add_moving_prop,
             "shot": self._shot,
@@ -1427,7 +1579,8 @@ class Session:
             ch = next((c for c in session.characters if c.name == w["character"]), None)
             if ch:
                 session._wield(ch, w["prop"], bone=w["bone"],
-                               offset=tuple(w["offset"]), scale=w["scale"], record=False)
+                               offset=tuple(w["offset"]), scale=w["scale"],
+                               spin=w.get("spin", 0.0), record=False)
         for rp in doc.get("ropes", []):
             session._rope(rp["x0"], rp["y0"], rp["x1"], rp["y1"], sag=rp["sag"],
                           color=rp["color"], width=rp["width"], name=rp["name"], record=False)
@@ -1437,6 +1590,25 @@ class Session:
                 session._leash(ls["a"], ls["a_bone"], ls["b"], ls["b_bone"],
                                color=ls["color"], width=ls["width"], name=ls["name"],
                                record=False)
+        for ov in doc.get("overlays", []):   # smear / aura / beam
+            k = ov["kind"]
+            if k == "smear":
+                session._smear(ov["character"], ov["bone"], ov["at"], span=ov["span"],
+                               color=ov["color"], spread=ov["spread"],
+                               opacity=ov["opacity"], name=ov["name"], record=False)
+            elif k == "aura":
+                session._aura(ov["character"], color=ov["color"], radius=ov["radius"],
+                              bone=ov["bone"], start=ov["start"], pulse=ov["pulse"],
+                              opacity=ov["opacity"], name=ov["name"], record=False)
+            elif k == "beam":
+                session._beam(ov["x0"], ov["y0"], ov["x1"], ov["y1"], ov["start"],
+                              ov["end"], color=ov["color"], core=ov["core"],
+                              width=ov["width"], opacity=ov["opacity"], name=ov["name"],
+                              record=False)
+            elif k == "afterimage":
+                session._afterimage(ov["character"], ov["at"], count=ov["count"],
+                                    gap=ov["gap"], opacity=ov["opacity"],
+                                    color=ov["color"], name=ov["name"], record=False)
         for th in doc.get("throws", []):
             session._throw(th["prop"], x0=th["x0"], y0=th["y0"], x1=th["x1"],
                            y1=th["y1"], apex=th["apex"], release=th["release"],

@@ -34,7 +34,7 @@ __all__ = [
     "punch", "kick", "dash", "flip", "swing", "block", "knockback", "land",
     "line_of_action",
     # everyday acting verbs
-    "celebrate", "fall", "sit", "tap", "pushup", "pedal", "fly",
+    "celebrate", "fall", "sit", "tap", "pushup", "pedal", "fly", "tossed",
     # snap-timing toolkit — the difference between snappy and floaty
     "hold", "hitstop", "retime",
 ]
@@ -772,6 +772,34 @@ def pedal(body: Body, *, ground_y: float, x0: float = 0.0, x1: float = 200.0,
                         Vec2(cx + r * math.cos(ang), cy + r * math.sin(ang)))
         for a in ("arm_upper", "arm_upper_far"):           # arms reach to the bars
             _set(pose, body, a, -70.0)
+        return pose
+
+    return pose_fn
+
+
+def tossed(body: Body, *, ground_y: float, x0: float = 0.0, x1: float = 220.0,
+           y0: float | None = None, apex: float = 130.0, spins: float = 1.5,
+           facing: float = 1.0, frames: int = 24) -> PoseFn:
+    """Hurled across the scene: an arc from (x0, y0) to the ground at x1, the body
+    spinning and the limbs loose — a figure thrown by another, ragdolling, and
+    crumpling where it lands. The victim half of a grab-and-throw."""
+    hip = body.hip_height
+    start_y = y0 if y0 is not None else ground_y - hip
+    end_y = ground_y - 0.18 * hip
+    def pose_fn(t: float) -> Pose:
+        p = clamp(t / frames, 0.0, 1.0)
+        gx = x0 + (x1 - x0) * p
+        gy = start_y + (end_y - start_y) * p - apex * 4.0 * p * (1.0 - p)  # up = -y
+        spin = -360.0 * spins * facing * ease_out(p)
+        pose = Pose(root=Vec2(gx, gy), root_angle=spin)
+        flail = 16.0 * math.sin(6.0 * math.pi * p)          # loose, wobbling limbs
+        for a in ("arm_upper", "arm_upper_far"):
+            _set(pose, body, a, -60.0 + flail)
+        for a in ("arm_lower", "arm_lower_far"):
+            _set(pose, body, a, 50.0)
+        for up_n, lo_n in _leg_pairs(body):
+            _set(pose, body, up_n, 40.0 - flail)
+            _set(pose, body, lo_n, 55.0)
         return pose
 
     return pose_fn

@@ -674,6 +674,18 @@ EVERYDAY acting verbs (the non-combat ones a scene needs constantly):
   actions.pushup(body, ground_y=, x=, reps=3)       # horizontal plank, bobbing
   actions.pedal(body, ground_y=, x0=, x1=)          # seated ride, legs cycling (a bike)
   actions.fly(body, ground_y=, x0=, x1=, height=)   # airborne, wings/arms flapping
+  actions.tossed(body, ground_y=, x0=, x1=, apex=, spins=)  # hurled ragdoll (the victim
+     of a grab-and-throw): spins on an arc, limbs loose, crumples where it lands
+
+FIGHT FX (the effects language of real stick fights — Xiao Xiao / DBZ / Madness):
+  smear(char, bone, at, span=4, spread=16)   # the translucent slash arc a fast limb
+     or blade leaves on its strike frame (`at`). THE stick-fight look; use on swings.
+  afterimage(char, at, count=3, gap=2)       # faded speed-ghosts of recent poses — the
+     trail of a dash, a teleport, a blur-fast move.
+  aura(char, color=, radius=, start=, pulse=)  # a charge-up glow that rides the figure.
+  beam(x0,y0,x1,y1, start, end, width=)      # an energy beam (glow + bright core). Two
+     aimed at each other + add_effect(\"impact\") between them = a beam struggle.
+  wield(char, prop, spin=720)                # twirl a staff/nunchuck in the hand.
 
 COMBAT / STUNT beats (a stick figure that fights, not just walks). facing=+1 faces
 right, -1 left. Each is anticipation -> fast strike -> settle; the blow lands ~60%
