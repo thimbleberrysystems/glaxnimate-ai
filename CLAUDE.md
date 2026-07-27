@@ -74,7 +74,10 @@ this build** — a patched binding (`~/src/glaxnimate`: `register_impl.hpp` cast
 order + `set_transition` null-guard) fixes the old silent no-op, so squash/stretch,
 camera zoom and smears reach the document — but write scale with a
 **`utils.Vector2D`**, not a tuple/list (those still marshal as the wrong QVariant
-type); eased scale via `set_transition` now works too;
+type); eased scale via `set_transition` now works too; **`TextShape` is now a real
+writable class** (same fork: `glaxnimate_model.hpp` registers it + `Font`), so
+`add_shape("TextShape").text/.font.size/.position` set and the glyphs rasterise —
+in the library, use a `{"type": "text", ...}` prop shape;
 **never enter `environment.Headless()` twice in one process** and never let Qt
 documents be GC'd mid-flight — the environment is a process singleton and scenes
 are pinned (`engine/session.py`). Under the MCP server, all Qt runs on ONE worker

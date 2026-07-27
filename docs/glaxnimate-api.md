@@ -46,7 +46,7 @@ with environment.Headless():
 
 ## Shape type names for `add_shape(...)`
 
-`Composable`, `Ellipse`, `Fill`, `Group`, `Image`, `InflateDeflate`, `Layer`, `Modifier`, `OffsetPath`, `Path`, `PathModifier`, `PolyStar`, `PreCompLayer`, `Rect`, `Repeater`, `RoundCorners`, `Shape`, `ShapeElement`, `Stroke`, `Styler`, `Trim`, `ZigZag`
+`Composable`, `Ellipse`, `Fill`, `Font`, `Group`, `Image`, `InflateDeflate`, `Layer`, `Modifier`, `OffsetPath`, `Path`, `PathModifier`, `PolyStar`, `PreCompLayer`, `Rect`, `Repeater`, `RoundCorners`, `Shape`, `ShapeElement`, `Stroke`, `Styler`, `TextShape`, `Trim`, `ZigZag`
 
 ## Key classes
 

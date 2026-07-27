@@ -253,7 +253,7 @@ def load_gait(name: str) -> str:
 
 
 # --------------------------------------------------------------------- prop
-_PROP_TYPES = ("rect", "ellipse", "polygon")
+_PROP_TYPES = ("rect", "ellipse", "polygon", "text")
 
 
 def prop_validate(data: dict) -> dict:
@@ -271,6 +271,8 @@ def prop_validate(data: dict) -> dict:
             missing = [k for k in ("x", "y", "w", "h") if k not in sh]
         elif t == "ellipse":
             missing = [k for k in ("cx", "cy", "w", "h") if k not in sh]
+        elif t == "text":
+            missing = [k for k in ("x", "y", "text") if k not in sh]
         else:
             missing = [] if sh.get("points") and len(sh["points"]) >= 3 else ["points (>=3)"]
         if missing:

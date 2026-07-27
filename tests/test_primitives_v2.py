@@ -5,9 +5,13 @@ sequence auto-hold, motion.drop) that a scene used to hand-roll every time.
 
 from __future__ import annotations
 
+import numpy as np
+
 from glaxnimate_ai.cartoon import actions, motion
+from glaxnimate_ai.cartoon.assets import prop_validate
 from glaxnimate_ai.cartoon.presets import stick
 from glaxnimate_ai.engine.session import Session, SessionStore
+from glaxnimate_ai.feedback.render import render_frame
 
 GROUND = 300.0
 
@@ -112,3 +116,32 @@ def test_drop_parks_then_lands_then_settles():
     # accelerating: later steps of the fall are bigger than earlier ones
     fall = [v.pos.y for v in s[5:16]]
     assert (fall[-1] - fall[-2]) > (fall[1] - fall[0])
+
+
+# ---------------------------------------------------------------- text
+def test_prop_validator_accepts_text():
+    prop_validate({"version": 1, "kind": "prop",
+                   "shapes": [{"type": "text", "x": 0, "y": 0, "text": "hi"}]})
+
+
+def test_text_shape_renders_real_glyphs():
+    # The Glaxnimate fork now downcasts TextShape, so text/font/position write and
+    # the glyphs actually rasterise instead of the shape being a no-op ShapeElement.
+    s = SessionStore().create(width=200, height=80, frames=2, ground_y=70)
+    r = s.run('background("#ffffff")\n'
+              'add_shape([{"type":"text","x":0,"y":0,"text":"OK","size":40,'
+              '"color":"#000000","anchor":"middle"}], 100, 45, name="t")')
+    assert r.ok, r.format()
+    a = np.asarray(render_frame(s.scene, 0).convert("L"))
+    assert (a < 80).sum() > 150, "text should put real ink on the canvas"
+
+
+def test_text_survives_replay():
+    s = SessionStore().create(width=200, height=80, frames=2, ground_y=70)
+    s.run('add_shape([{"type":"text","x":0,"y":0,"text":"HELLO","size":20,'
+          '"color":"#111"}], 40, 40, name="t")')
+    s.save()
+    back = Session.replay(s.doc_id)
+    assert back.doc["shapes"][0]["shapes"][0]["type"] == "text"
+    a = np.asarray(render_frame(back.scene, 0).convert("L"))
+    assert (a < 80).sum() > 80

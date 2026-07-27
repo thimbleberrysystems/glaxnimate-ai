@@ -72,6 +72,27 @@ def _poly(parent, pts: list[tuple[float, float]], color: str):
     return g
 
 
+def _text(parent, x: float, y: float, text: str, size: float, color: str,
+          family: str | None = None, anchor: str = "start"):
+    """A line of real vector text — the binding downcasts TextShape now, so its
+    text/font/position are writable (a fix in the Glaxnimate fork). `y` is the
+    baseline. `anchor` centres ("middle") or right-aligns ("end") via a width
+    estimate, since a label usually wants to sit centred on a prop."""
+    g = _group(parent, color)  # the Fill colours the glyphs that follow
+    t = g.add_shape("TextShape")
+    t.text = str(text)
+    t.font.size = float(size)
+    if family:
+        try:
+            t.font.family = family
+        except Exception:  # noqa: BLE001 - fall back to the default face
+            pass
+    w_est = 0.55 * float(size) * len(str(text))
+    dx = -w_est / 2 if anchor == "middle" else (-w_est if anchor == "end" else 0.0)
+    t.position.value = utils.Point(x + dx, y)
+    return g
+
+
 def sky(scene: Scene, layer, *, top: str = "#bfe3f5", horizon_y: float | None = None) -> None:
     h = horizon_y if horizon_y is not None else int(scene.comp.height)
     _rect(layer, 0, 0, int(scene.comp.width), h, top)
@@ -156,6 +177,10 @@ def draw_prop(layer, data: dict, *, x: float = 0.0, ground_y: float = 0.0,
         elif t == "polygon":
             pts = [(x + px * sx, ground_y + py * sy) for px, py in sh["points"]]
             _poly(layer, pts, color)
+        elif t == "text":
+            _text(layer, x + sh["x"] * sx, ground_y + sh["y"] * sy, sh["text"],
+                  sh.get("size", 24) * min(sx, sy), color,
+                  family=sh.get("family"), anchor=sh.get("anchor", "start"))
 
 
 def parallax(layer, *, distance: float, frames: int, camera_speed: float) -> None:
