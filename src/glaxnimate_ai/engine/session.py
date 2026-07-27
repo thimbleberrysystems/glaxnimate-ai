@@ -131,6 +131,7 @@ class Session:
         thickness: float | None = None,
         style: str | None = None,
         face: str | dict | None = None,
+        facing: float = 1.0,
     ) -> Character:
         """Bake a rig into the document and register it with the critic.
 
@@ -141,6 +142,10 @@ class Session:
         `style="lineart"` reskins the body as a stick figure before baking, so any
         creature — not just `stick()` — can be drawn as line art, and the look
         serialises into the scene document (it lives in the body's parts).
+
+        `facing=-1` mirrors the character to look left (its profile face and limbs
+        turn) — so two figures can face each other. Pair it with a leftward gait to
+        walk left; on its own it just turns a standing/talking figure around.
         """
         if style == "lineart":
             body = lineart(body)
@@ -153,14 +158,15 @@ class Session:
             return pose_at(body.rig, gait, t, ground_y=self.ground_y, body_x0=x)
 
         return self._bake_character(body, pose_fn, gait=gait, name=name,
-                                    color=color, thickness=thickness, face=face)
+                                    color=color, thickness=thickness, face=face,
+                                    facing=facing)
 
     def _bake_character(
         self, body: Body, pose_fn, *, gait: Gait | None, name: str,
         color: str | None = None, thickness: float | None = None,
         face: str | dict | None = None, record: bool = True,
         poses: list | None = None, face_data: dict | None = None,
-        expressions: list | None = None, first: int = 0,
+        expressions: list | None = None, first: int = 0, facing: float = 1.0,
     ) -> Character:
         """Bake + register + record. Every character path funnels through here so
         the scene document always matches what is on the canvas."""
@@ -168,6 +174,7 @@ class Session:
         bake_rig(
             self.scene, body, pose_fn, frames=self.frames, first=first,
             color=color, thickness=thickness, layer_name=name, layers_out=layers,
+            facing=facing,
         )
         limb_pairs = [(li.upper, li.lower) for li in gait.limbs] if gait else []
         ch = Character(name, body, gait, pose_fn, limb_pairs=limb_pairs,
@@ -190,6 +197,7 @@ class Session:
                 "color": color, "thickness": thickness,
                 "face": face_data,
                 "expressions": [],
+                "facing": facing,
             })
         if expressions:
             replaying = not record
@@ -294,19 +302,21 @@ class Session:
         style: str | None = None,
         face: str | dict | None = None,
         first: int = 0,
+        facing: float = 1.0,
     ) -> Character:
         """Bake a character driven by an arbitrary pose function (a jump, a punch).
 
         Actions aren't locomotion, so there is no gait — but the character is still
         registered so the linter and diagnostics can inspect it (contact slip,
         joint integrity, bounds all still apply). `style="lineart"` reskins as a
-        stick figure, `face=` mounts a face, exactly as `add_character` does.
+        stick figure, `face=` mounts a face, `facing=-1` turns it to look left,
+        exactly as `add_character` does.
         """
         if style == "lineart":
             body = lineart(body)
         return self._bake_character(body, pose_fn, gait=None, name=name,
                                     color=color, thickness=thickness, face=face,
-                                    first=first)
+                                    first=first, facing=facing)
 
     # ------------------------------------------------------------------ audio
     def _add_sound(self, sfx, frame: float, *, gain: float = 1.0,
@@ -1723,6 +1733,7 @@ class Session:
                 color=rec.get("color"), thickness=rec.get("thickness"),
                 face_data=rec.get("face"), record=False,
                 expressions=[(f, a) for f, a in rec.get("expressions", [])],
+                facing=rec.get("facing", 1.0),
             )
             ch.limb_pairs = [tuple(x) for x in rec.get("limbs", [])]
         for ob in doc["objects"]:

@@ -8,7 +8,7 @@ from __future__ import annotations
 import numpy as np
 
 from glaxnimate_ai.cartoon import actions, motion
-from glaxnimate_ai.cartoon.assets import prop_validate
+from glaxnimate_ai.cartoon.assets import load_face, prop_validate
 from glaxnimate_ai.cartoon.presets import stick
 from glaxnimate_ai.engine.session import Session, SessionStore
 from glaxnimate_ai.feedback.render import render_frame
@@ -145,3 +145,49 @@ def test_text_survives_replay():
     assert back.doc["shapes"][0]["shapes"][0]["type"] == "text"
     a = np.asarray(render_frame(back.scene, 0).convert("L"))
     assert (a < 80).sum() > 80
+
+
+# ---------------------------------------------------------------- facing
+def _char_layer(scene, name):
+    return next(sh for sh in scene.comp.shapes if sh.name == name)
+
+
+def test_facing_left_mirrors_the_puppet():
+    s = SessionStore().create(width=300, height=340, frames=4, ground_y=300)
+    s.run('a=stick(); b=stick()\n'
+          'add_action(a, actions.idle(a, ground_y=ground, x=110), name="a", face="stick")\n'
+          'add_action(b, actions.idle(b, ground_y=ground, x=210), name="b", face="stick", facing=-1)')
+    assert _char_layer(s.scene, "a").transform.scale.value.x == 1.0
+    assert _char_layer(s.scene, "b").transform.scale.value.x == -1.0
+    # flipping is in place: the mirrored figure keeps its root x, it doesn't slide off
+    assert _char_layer(s.scene, "b").transform.position.value_at_time(0.0).x > 150
+
+
+def test_facing_persists_and_replays():
+    s = SessionStore().create(width=300, height=340, frames=4, ground_y=300)
+    s.run('b=stick()\n'
+          'add_action(b, actions.idle(b, ground_y=ground, x=210), name="b", '
+          'face="stick", facing=-1)')
+    assert s.doc["characters"][0]["facing"] == -1
+    s.save()
+    back = Session.replay(s.doc_id)
+    assert _char_layer(back.scene, "b").transform.scale.value.x == -1.0
+
+
+# ---------------------------------------------------------------- emotions
+def test_face_has_the_expanded_expression_set():
+    atts = load_face("stick")["attachments"]
+    for e in ("neutral", "happy", "sad", "surprised", "angry", "tired", "excited"):
+        assert e in atts, f"stick face is missing the {e!r} expression"
+
+
+def test_set_expression_changes_the_rendered_face():
+    def face_ink(exp):
+        s = SessionStore().create(width=140, height=360, frames=3, ground_y=330)
+        s.run(f'background("#fff")\nm=stick(ink="#111")\n'
+              f'add_action(m, actions.idle(m, ground_y=ground, x=70), name="m", face="stick")\n'
+              f'set_expression("m","{exp}",0)')
+        a = np.asarray(render_frame(s.scene, 1).convert("L").crop((30, 40, 110, 116)))
+        return (a < 100).sum()
+    # a heavy-lidded tired face and a wide excited face put different ink on the head
+    assert face_ink("tired") != face_ink("excited")

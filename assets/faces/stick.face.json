@@ -201,6 +201,52 @@
     "color": "#1a1a1a"
    }
   ],
+  "tired": [
+   {
+    "type": "rect",
+    "x": 2,
+    "y": -9,
+    "w": 9,
+    "h": 2.8,
+    "color": "#1a1a1a"
+   },
+   {
+    "type": "rect",
+    "x": 2,
+    "y": -4,
+    "w": 7,
+    "h": 1.4,
+    "color": "#7a7a7a"
+   },
+   {
+    "type": "rect",
+    "x": 1,
+    "y": 8,
+    "w": 8,
+    "h": 2.0,
+    "color": "#1a1a1a"
+   }
+  ],
+  "excited": [
+   {
+    "type": "ellipse",
+    "cx": 6,
+    "cy": -8,
+    "w": 7,
+    "h": 7,
+    "color": "#1a1a1a"
+   },
+   {
+    "type": "polygon",
+    "points": [
+     [-1, 4],
+     [6, 15],
+     [13, 4],
+     [6, 9]
+    ],
+    "color": "#1a1a1a"
+   }
+  ],
   "say_closed": [
    {
     "type": "ellipse",

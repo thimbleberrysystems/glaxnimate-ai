@@ -291,6 +291,7 @@ def bake_rig(
     layer_name: str = "character",
     stats: dict | None = None,
     layers_out: dict | None = None,
+    facing: float = 1.0,
 ) -> model.shapes.Layer:
     """Build a parented bone-layer rig and key it sparsely.
 
@@ -366,6 +367,13 @@ def bake_rig(
                            reduce_point(root_pos, tol=TOL_PX), offset=first)
     n_keys += _write_scalar(root_layer.transform.rotation,
                             reduce_scalar(root_rot, tol=TOL_DEG), offset=first)
+
+    # Facing: mirror the whole puppet about its own root (the spine) with a static
+    # scale.x = -1, so the profile face and the limbs all turn to look the other
+    # way. The root position is unchanged, so the figure flips in place rather than
+    # sliding off — combine with a leftward gait to actually walk left.
+    if facing < 0:
+        root_layer.transform.scale.value = utils.Vector2D(-1.0, 1.0)
 
     # A contact chain is the contact joint and everything above it to the root —
     # the bones whose angles decide where a planted foot actually lands.
