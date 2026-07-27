@@ -119,8 +119,8 @@ GAIT_TABLE: dict[str, dict[int, list[float]]] = {
 # rig scales together, so longer legs do not help — only a lower ride does).
 # keys: duty, stride, lift, bob (fractions of hip height), lean (deg), crouch.
 GAIT_DEFAULTS: dict[str, dict[str, float]] = {
-    "walk":   {"duty": 0.62, "stride": 0.85, "lift": 0.18, "bob": 0.04, "lean": 0.0, "crouch": 1.00},  # noqa: E501
-    "run":    {"duty": 0.35, "stride": 1.08, "lift": 0.28, "bob": 0.08, "lean": -8.0, "crouch": 0.86},  # noqa: E501
+    "walk":   {"duty": 0.62, "stride": 0.74, "lift": 0.15, "bob": 0.04, "lean": 0.0, "crouch": 1.00},  # noqa: E501
+    "run":    {"duty": 0.35, "stride": 0.90, "lift": 0.24, "bob": 0.08, "lean": -8.0, "crouch": 0.80},  # noqa: E501
     "trot":   {"duty": 0.45, "stride": 1.00, "lift": 0.22, "bob": 0.05, "lean": 0.0, "crouch": 0.96},  # noqa: E501
     "gallop": {"duty": 0.30, "stride": 1.20, "lift": 0.28, "bob": 0.08, "lean": -6.0, "crouch": 0.84},  # noqa: E501
     "bound":  {"duty": 0.35, "stride": 1.18, "lift": 0.30, "bob": 0.09, "lean": 0.0, "crouch": 0.86},  # noqa: E501
@@ -131,7 +131,7 @@ GAIT_DEFAULTS: dict[str, dict[str, float]] = {
 #: lock its legs straight — and if it did, a foot planted even slightly ahead of
 #: the hip would be out of reach and the IK would silently fall short. This one
 #: number is the difference between a walk and a stilt-walk.
-HIP_HEIGHT_RATIO = 0.85
+HIP_HEIGHT_RATIO = 0.90
 
 
 def gait_phases(name: str, n_limbs: int) -> list[float]:

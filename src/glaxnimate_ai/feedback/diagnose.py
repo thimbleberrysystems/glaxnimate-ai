@@ -190,7 +190,10 @@ def diagnose_timeline(
     still_overhangs: list[float] = []
     leg = tl.leg_length or 1.0
     for f in range(1, n_frames):
-        moving = root_track.origin[f].distance_to(root_track.origin[f - 1])
+        # Locomoting is *horizontal* travel; a stationary figure's vertical breathing
+        # bob must not disqualify it from the balance check (else a bobbing idle is
+        # never judged), so measure the x-velocity only.
+        moving = abs(root_track.origin[f].x - root_track.origin[f - 1].x)
         if moving > 0.75:
             continue  # locomoting: not a statics problem
         planted = [

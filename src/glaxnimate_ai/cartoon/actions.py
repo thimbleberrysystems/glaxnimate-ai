@@ -174,21 +174,28 @@ def jump(
 
 
 def idle(body: Body, *, ground_y: float, x: float = 0.0, cycle_frames: float = 48.0) -> PoseFn:
-    """A living hold: a slow breathing rise and fall, feet planted.
+    """A living hold: a standing figure breathing, feet planted a little apart.
 
-    A character that is perfectly still reads as dead. The smallest amount of life —
-    a breath — is the difference between a pause and a freeze.
+    A character that is perfectly still reads as dead — the breath is the difference
+    between a pause and a freeze. It stands *tall*: a standing figure needs no stride
+    reach, so its legs come nearly straight (unlike a gait, which rides lower for
+    room to step) and the feet sit a shoulder's width apart, which is what reads as
+    "standing" rather than "crouching".
     """
-    hip = body.hip_height
-    amp = 0.02 * hip
+    stand = body.leg_length * 0.97           # near-straight standing legs
+    amp = 0.014 * stand
+    spread = body.leg_length * 0.07          # feet a little apart
 
     def pose_fn(t: float) -> Pose:
         rise = amp * math.sin(2.0 * math.pi * t / cycle_frames)
-        pose = Pose(root=Vec2(x, ground_y - hip - rise), root_angle=0.0)
-        if "spine" in body.rig.joints:
-            pose.angles["spine"] = 1.5 * math.sin(2.0 * math.pi * t / cycle_frames)
+        pose = Pose(root=Vec2(x, ground_y - stand - rise), root_angle=0.0)
+        _set(pose, body, "spine", 1.2 * math.sin(2.0 * math.pi * t / cycle_frames))
         frames_solved = body.rig.solve(pose)
-        _ground_legs(body, pose, frames_solved, ground_y)
+        for i, (up_n, lo_n) in enumerate(_leg_pairs(body)):
+            hipj = frames_solved[up_n].origin
+            dx = spread if i == 0 else -spread
+            _ik_foot_to(body, pose, frames_solved, up_n, lo_n,
+                        Vec2(hipj.x + dx, ground_y))
         return pose
 
     return pose_fn

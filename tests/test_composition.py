@@ -36,8 +36,10 @@ def test_locomote_lets_a_gait_compose_in_a_sequence():
 
 def test_blend_smooths_a_pose_join_without_changing_length():
     body = stick()
+    # two grounded beats whose feet sit at the same spot (both stance-based), so the
+    # only thing to smooth is the arms — blend must not skate the matching feet.
     seg_a = actions.celebrate(body, ground_y=GROUND, x=150, frames=16)
-    seg_b = actions.idle(body, ground_y=GROUND, x=150)
+    seg_b = actions.punch(body, ground_y=GROUND, x=150, frames=14)
     hard = actions.sequence((seg_a, 16), (seg_b, 14))
     soft = actions.sequence((seg_a, 16), (seg_b, 14), blend=6)
     # near the seam, the biggest arm jump between consecutive frames is smaller
