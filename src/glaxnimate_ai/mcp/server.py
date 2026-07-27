@@ -286,13 +286,26 @@ def auto_fx(doc_id: str) -> str:
 def add_effect(doc_id: str, fx: str, x: float, y: float, frame: float) -> str:
     """Place one visual effect by hand (auto_fx covers motion-driven ones).
 
-    `fx` is a builtin (impact, dust, speed_lines, spark) or a saved fx asset name.
-    The effect pops in on `frame` at (x, y) — screen coords, y down — then grows and
-    fades over its lifespan. Put an `impact` on a strike's contact frame (beats land
-    ~60% through) with a hit sfx on the same frame. New effects are fx assets: shapes
-    plus a grow/fade envelope, saved via save_asset.
+    `fx` is a builtin (impact, dust, speed_lines, spark, fire, flash, glitch) or a
+    saved fx asset name. The effect pops in on `frame` at (x, y) — screen coords, y
+    down — then grows and fades over its lifespan. Put an `impact` on a strike's
+    contact frame (beats land ~60% through) with a hit sfx on the same frame. New
+    effects are fx assets: shapes plus a grow/fade envelope, saved via save_asset.
     """
     return store.get(doc_id)._add_effect(fx, x, y, frame)
+
+
+@mcp.tool()
+@qt_tool
+def background(doc_id: str, color: str = "#f6f6f7") -> str:
+    """Fill the canvas with a flat colour behind everything — call this FIRST.
+
+    Video export composites transparency onto black, so a scene with no full-canvas
+    art exports on a black field. A stark white or light-grey card is the
+    stick-figure default and is what keeps the frame clean; it is drawn oversized so
+    a camera shake or zoom never reveals an edge. For a photo/screenshot behind the
+    action use backdrop() (via run_script) instead."""
+    return store.get(doc_id)._background(color)
 
 
 @mcp.tool()

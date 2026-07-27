@@ -19,7 +19,8 @@ from glaxnimate_ai.engine.session import Session, SessionStore
 
 
 def test_builtin_effects_validate():
-    assert set(fx_names()) == {"dust", "impact", "speed_lines", "spark"}
+    assert set(fx_names()) == {"dust", "impact", "speed_lines", "spark",
+                               "fire", "flash", "glitch"}
     for name in fx_names():
         d = resolve_fx(name)
         assert d["kind"] == "fx" and d["shapes"] and d["lifespan"] > 0

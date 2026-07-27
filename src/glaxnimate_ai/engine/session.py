@@ -1097,14 +1097,15 @@ class Session:
     # ---------------------------------------------------- free-floating shapes
     def _add_shape(self, shapes, x: float, y: float, *, name: str | None = None,
                    scale: float = 1.0, pulse: tuple | None = None, spin: float = 0.0,
-                   appear: float = 0.0, record: bool = True) -> str:
+                   appear: float = 0.0, vanish: float = 0.0, record: bool = True) -> str:
         """Place a free-floating prop at (x, y) — not pinned to the ground, not held.
 
         This is how a scene gets a heart, a sign, a chart, a hat, a drum, a speech
         placard: anything that is neither scenery nor a puppet. `shapes` is an inline
         list / {"shapes": [...]} of prop-schema shapes, or a saved prop name. Options:
         `pulse=(lo, hi, cycles)` beats the scale (a heart); `spin` rotates it;
-        `appear` pops it in at a frame (a reveal). Screen coords, y down.
+        `appear` pops it in at a frame (a reveal); `vanish` pops it back out at a
+        frame (a thought that clears, a flash that's gone). Screen coords, y down.
         """
         from glaxnimate import model, utils
 
@@ -1134,18 +1135,25 @@ class Session:
         if spin:
             g.transform.rotation.set_keyframe(0.0, 0.0)
             g.transform.rotation.set_keyframe(float(self.frames), float(spin))
-        if appear and appear > 0:
-            lay.opacity.set_keyframe(0.0, 0.0)
+        if (appear and appear > 0) or (vanish and vanish > 0):
+            start_vis = 0.0 if (appear and appear > 0) else 1.0
+            lay.opacity.set_keyframe(0.0, start_vis)
             tr = model.KeyframeTransition()
             tr.hold = True
             lay.opacity.set_transition(0.0, tr)
-            lay.opacity.set_keyframe(float(appear), 1.0)
+            if appear and appear > 0:
+                lay.opacity.set_keyframe(float(appear), 1.0)
+                tr2 = model.KeyframeTransition()
+                tr2.hold = True
+                lay.opacity.set_transition(float(appear), tr2)
+            if vanish and vanish > 0:
+                lay.opacity.set_keyframe(float(vanish), 0.0)
 
         if record:
             self.doc["shapes"].append({
                 "shapes": data["shapes"], "x": x, "y": y, "scale": scale,
                 "pulse": list(pulse) if pulse else None, "spin": spin,
-                "appear": appear, "name": lname,
+                "appear": appear, "vanish": vanish, "name": lname,
             })
         return f"shape {lname!r} at ({x:g}, {y:g})"
 
@@ -1272,6 +1280,35 @@ class Session:
             self.doc["backdrop"] = {"path": str(image_path), "fit": fit,
                                     "opacity": opacity}
         return f"backdrop {image_path}"
+
+    def _background(self, color: str = "#f6f6f7", *, record: bool = True) -> str:
+        """Fill the canvas with a flat colour behind everything.
+
+        This is not decoration — it is what a rendered scene needs to *not* be
+        black. Glaxnimate's video export composites transparency onto black, so a
+        scene with no full-canvas art exports on a black field; a stark white or
+        light-grey card is the stick-figure default. The card is drawn oversized so
+        a camera shake or a zoom-out never reveals an edge. Call it *first*, before
+        any content: layers draw in creation order, so the earliest one sits behind
+        everything.
+        """
+        from glaxnimate import utils
+
+        from . import props as P
+
+        comp = self.scene.comp
+        lay = self.scene.layer("background")
+        cw, ch = float(comp.width), float(comp.height)
+        m = 120.0
+        g = lay.add_shape("Group")
+        P.draw_prop(g, {"shapes": [
+            {"type": "rect", "x": -cw / 2 - m, "y": -ch / 2 - m,
+             "w": cw + 2 * m, "h": ch + 2 * m, "color": color}]},
+            x=0.0, ground_y=0.0)
+        g.transform.position.value = utils.Point(cw / 2, ch / 2)
+        if record:
+            self.doc["background"] = {"color": color}
+        return f"background {color}"
 
     def _path_fn(self, points, span: float):
         """A polyline sampler: point at fraction f/span along `points` (a (x,y) list)."""
@@ -1593,6 +1630,7 @@ class Session:
             "set_expression": self._set_expression,
             "scenery": self._scenery,
             "backdrop": self._backdrop,
+            "background": self._background,
             "cursor": self._cursor,
             "drag": self._drag,
             "add_sound": self._add_sound,
@@ -1659,7 +1697,10 @@ class Session:
         )
         session.doc = doc  # the replayed doc IS the doc; don't re-record
 
-        bd = doc.get("backdrop")            # first, so it sits behind everything
+        bg = doc.get("background")           # very first, so it sits behind all
+        if bg:
+            session._background(bg["color"], record=False)
+        bd = doc.get("backdrop")            # then the image backdrop
         if bd and Path(bd["path"]).exists():
             session._backdrop(bd["path"], fit=bd["fit"], opacity=bd["opacity"],
                               record=False)
@@ -1712,7 +1753,7 @@ class Session:
             session._add_shape(
                 sp["shapes"], sp["x"], sp["y"], name=sp["name"], scale=sp["scale"],
                 pulse=tuple(sp["pulse"]) if sp["pulse"] else None, spin=sp["spin"],
-                appear=sp["appear"], record=False)
+                appear=sp["appear"], vanish=sp.get("vanish", 0.0), record=False)
         for em in doc.get("emits", []):
             session._emit(
                 em["fx"], em["x"], em["y"], count=em["count"], spread=em["spread"],

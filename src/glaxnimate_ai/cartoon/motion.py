@@ -17,9 +17,9 @@ import math
 from dataclasses import dataclass, field
 
 from .geometry import Vec2, lerp
-from .principles import ease_in_out, squash_stretch
+from .principles import ease_in, ease_in_out, squash_stretch
 
-__all__ = ["Sample", "bounce", "roll", "spring", "attract", "drift", "sway"]
+__all__ = ["Sample", "bounce", "roll", "spring", "attract", "drift", "sway", "drop"]
 
 
 @dataclass(slots=True)
@@ -228,6 +228,29 @@ def drift(*, start: Vec2, end: Vec2, frames: int, sway_amount: float = 30.0) -> 
         base = Vec2(lerp(start.x, end.x, t), lerp(start.y, end.y, t))
         offset = math.sin(t * math.pi * 4.0) * sway_amount
         out.append(Sample(f, base + Vec2(offset, 0.0), angle=offset * 0.6))
+    return out
+
+
+def drop(*, x: float, y_top: float, y_land: float, frames: int, delay: int = 0,
+         settle: int = 0) -> list[Sample]:
+    """A thing dropping under gravity and landing: parked at `y_top` for `delay`
+    frames (park it off-screen and it stays invisible until it falls), then an
+    accelerating fall to `y_land` over `frames`, then a small damped bounce over
+    `settle`. Unlike `drift` (a leaf that sways sideways as it descends) this is a
+    straight vertical fall with weight — a dropped prop, a landing crate, the
+    ceiling-high stack of paperwork that buries a developer.
+    """
+    out: list[Sample] = []
+    for f in range(delay):
+        out.append(Sample(f, Vec2(x, y_top)))
+    span = y_land - y_top
+    for k in range(frames + 1):
+        t = ease_in(k / frames) if frames else 1.0
+        out.append(Sample(delay + k, Vec2(x, y_top + span * t)))
+    for k in range(1, settle + 1):
+        u = k / settle
+        b = -abs(span) * 0.05 * math.sin(math.pi * u) * (1.0 - u)
+        out.append(Sample(delay + frames + k, Vec2(x, y_land + b)))
     return out
 
 

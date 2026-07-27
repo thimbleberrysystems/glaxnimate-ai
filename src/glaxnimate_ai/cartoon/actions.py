@@ -37,7 +37,7 @@ __all__ = [
     "celebrate", "fall", "sit", "tap", "pushup", "pedal", "fly", "tossed",
     "wall_run", "wall_kick", "aim",
     # snap-timing toolkit — the difference between snappy and floaty
-    "hold", "hitstop", "retime",
+    "hold", "hitstop", "retime", "freeze", "posture",
 ]
 
 PoseFn = Callable[[float], Pose]
@@ -1014,12 +1014,42 @@ def sequence(*segments: tuple[PoseFn, int], blend: float = 0.0) -> PoseFn:
     def pose_fn(t: float) -> Pose:
         for i, (start, end, fn) in enumerate(bounds):
             if t < end or end == acc:
-                pose = fn(t - start)
+                # Past the whole sequence, hold the last beat's *final* pose rather
+                # than call it out of range — so a film longer than the sequence
+                # settles on the last frame instead of wrapping or drifting.
+                local = t - start if (t < end or i < len(bounds) - 1) else end - start
+                pose = fn(local)
                 if blend > 0 and i + 1 < len(bounds) and t > end - blend:
                     nxt = bounds[i + 1][2]
                     w = ease_in_out(clamp((t - (end - blend)) / blend, 0.0, 1.0))
                     pose = _lerp_pose(pose, nxt(t - end), w)  # next beat at its start
                 return pose
-        return bounds[-1][2](t - bounds[-1][0])
+        return bounds[-1][2](acc - bounds[-1][0])
 
     return pose_fn
+
+
+def freeze(pose_fn: PoseFn, at: float = 0.0) -> PoseFn:
+    """Hold one pose forever: sample `pose_fn` at frame `at` and return that pose
+    for every t. The clean way to end a beat on a held stance — a ta-da, a
+    thumbs-up, a landed point — as the tail of a `sequence` without the action
+    being asked for frames it never defined.
+    """
+    held = pose_fn(float(at)).copy()
+    return lambda t: held.copy()
+
+
+def posture(pose_fn: PoseFn, *, lean: float = 0.0, droop: float = 0.0,
+            stiffen: bool = False) -> PoseFn:
+    """Restyle a beat's carriage without touching its footwork: bias the spine and
+    head. `lean` tilts the torso forward (a hunch, a slump), `droop` drops the head.
+    `stiffen` *sets* the spine to `lean` (killing the idle sway) for a rigid, robotic
+    read instead of adding to it. Feet stay where the underlying action put them.
+    """
+    def g(t: float) -> Pose:
+        p = pose_fn(t)
+        p.angles["spine"] = lean if stiffen else p.angles.get("spine", 0.0) + lean
+        if droop:
+            p.angles["head"] = p.angles.get("head", 0.0) + droop
+        return p
+    return g

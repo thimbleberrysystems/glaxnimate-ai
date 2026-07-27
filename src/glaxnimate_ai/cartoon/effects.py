@@ -7,10 +7,11 @@ The engine bakes it at a position on a frame (`engine/bake.py::bake_effect`); th
 envelope uses real `transform.scale`, which only became writable once the binding
 was fixed.
 
-The builtins below are the four an action reel leans on — a dust puff where a foot
+The builtins below are the ones an action reel leans on — a dust puff where a foot
 or body lands, an impact starburst where a blow connects, speed lines off a dash,
-and sparks off a clash. New effects are `fx` JSON assets in the same shape; nothing
-here is privileged over an authored one.
+sparks off a clash, a fire burst on an explosion, a screen flash and a rainbow
+glitch. New effects are `fx` JSON assets in the same shape; nothing here is
+privileged over an authored one.
 """
 
 from __future__ import annotations
@@ -70,6 +71,39 @@ BUILTIN_FX: dict[str, dict] = {
              "color": "#ffcf3f"},
             {"type": "polygon", "points": [[-14, -14], [2, 2], [14, 14], [-2, -2]],
              "color": "#ffd98a"},
+        ],
+    },
+    # an ignition burst: layered flame tongues that leap up and fade. For a fire
+    # that *keeps* burning, add the `flame` prop asset with a scale `pulse` instead;
+    # this is the FWOOSH on the frame it catches.
+    "fire": {
+        "lifespan": 9, "grow": [0.5, 1.4], "fade": True, "spin": 0,
+        "shapes": [
+            {"type": "polygon", "points": [[-34, 22], [-18, -40], [-6, 10],
+                                            [4, -64], [16, 6], [30, -34], [40, 22]],
+             "color": "#ff5a1a"},
+            {"type": "polygon", "points": [[-22, 22], [-8, -28], [2, 8],
+                                            [11, -42], [24, 22]], "color": "#ffab26"},
+            {"type": "polygon", "points": [[-11, 22], [0, -16], [11, 22]],
+             "color": "#ffe870"},
+        ],
+    },
+    # a screen flash: one bright panel that pops full and fades in three frames —
+    # for a hit-frame whiteout, a camera pop, a lightning strike.
+    "flash": {
+        "lifespan": 3, "grow": [1.0, 1.0], "fade": True, "spin": 0,
+        "shapes": [
+            {"type": "rect", "x": -90, "y": -60, "w": 180, "h": 120, "color": "#ffffff"},
+        ],
+    },
+    # a digital glitch: three saturated colour bars that flash over a screen and
+    # vanish — a corruption, a hallucinated write, a broken render.
+    "glitch": {
+        "lifespan": 4, "grow": [1.0, 1.0], "fade": True, "spin": 0,
+        "shapes": [
+            {"type": "rect", "x": -66, "y": -44, "w": 44, "h": 88, "color": "#ff0055"},
+            {"type": "rect", "x": -22, "y": -44, "w": 44, "h": 88, "color": "#00e5ff"},
+            {"type": "rect", "x": 22, "y": -44, "w": 45, "h": 88, "color": "#ffe600"},
         ],
     },
 }
