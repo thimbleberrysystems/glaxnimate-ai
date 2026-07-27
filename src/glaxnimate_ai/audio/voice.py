@@ -61,12 +61,61 @@ def _stub(text: str, sr: int) -> np.ndarray:
     return sig.astype(np.float32)
 
 
+def _gtts_synthesize(text: str, lang: str, sr: int) -> np.ndarray:
+    """A line in any Google-TTS language (Tamil, Hindi, ...), decoded to mono float32.
+
+    Piper has no Tamil voice, so a bare language code routes here instead. Needs the
+    network at synthesis time; the rendered WAV is cached in the project, so replay
+    stays offline like every other line.
+    """
+    try:
+        from gtts import gTTS
+    except ImportError as e:
+        raise ImportError(
+            f"speaking {lang!r} needs gTTS (piper has no voice for it). Run: "
+            "uv pip install --python .venv/bin/python gtts"
+        ) from e
+    import io
+
+    import av
+
+    buf = io.BytesIO()
+    gTTS(text, lang=lang).write_to_fp(buf)     # mp3
+    buf.seek(0)
+    chunks, native = [], sr
+    with av.open(buf) as c:
+        for fr in c.decode(audio=0):
+            native = fr.sample_rate
+            x = fr.to_ndarray()
+            chunks.append(x.mean(axis=0) if x.ndim == 2 else x.reshape(-1))
+    if not chunks:
+        return np.zeros(1, dtype=np.float32)
+    mono = np.concatenate(chunks).astype(np.float32)
+    if float(np.max(np.abs(mono))) > 1.5:      # int16 payload -> normalise
+        mono /= 32768.0
+    if native != sr:
+        n = int(len(mono) * sr / native)
+        mono = np.interp(np.linspace(0, len(mono) - 1, n),
+                         np.arange(len(mono)), mono).astype(np.float32)
+    return mono
+
+
 def synthesize(text: str, voice: str = DEFAULT_VOICE,
                sr: int = SAMPLE_RATE) -> np.ndarray:
     """Text → mono float32 at `sr`. Raises a teaching error if the voice model
-    is absent (with the exact command that fixes it)."""
+    is absent (with the exact command that fixes it).
+
+    `voice` is a piper model name (``en_US-lessac-medium``) OR a Google-TTS language
+    code for languages piper lacks: a bare code like ``ta`` (Tamil) / ``hi``, or an
+    explicit ``gtts:ta``.
+    """
     if os.environ.get("GLAXNIMATE_AI_TTS_STUB"):
         return _stub(text, sr)
+
+    if voice.startswith("gtts:"):
+        return _gtts_synthesize(text, voice.split(":", 1)[1], sr)
+    if "-" not in voice and "_" not in voice:   # a bare language code -> gTTS
+        return _gtts_synthesize(text, voice, sr)
 
     # Order matters: check the package before the model, because the command
     # that fetches the model IS the package. Reporting a missing download to

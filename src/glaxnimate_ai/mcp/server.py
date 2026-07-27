@@ -344,10 +344,12 @@ def say(doc_id: str, character: str, text: str, frame: float,
         voice: str | None = None) -> str:
     """A character speaks the line, with a speech bubble for the duration.
 
-    Local neural TTS (piper). The rendered audio is cached inside the project,
-    so the scene replays its dialogue forever without re-synthesis. If the
-    voice model is missing, the error contains the exact download command —
-    relay it to the user (one ~60MB download, network needed once).
+    Local neural TTS (piper) by default; the rendered audio is cached in the project,
+    so the scene replays its dialogue forever without re-synthesis (and the mouth
+    lip-syncs to it). `voice` is a piper model name (en_US-lessac-medium), or — for
+    languages piper lacks — a Google-TTS language code: pass voice=\"ta\" for TAMIL
+    (Tamil text in, Tamil speech out), \"hi\" Hindi, etc. (gTTS, network needed once
+    per line; then cached). If a voice is missing, the error has the fix command.
     """
     return store.get(doc_id)._say(character, text, frame, voice=voice)
 
@@ -633,6 +635,8 @@ placement and lip-sync are arithmetic, not guesswork)
   say(char, "line", frame)   speaks + a speech bubble; auto lip-sync flaps the
      mouth from the audio's own RMS envelope when the face has say_* mouths (the
      stick face does). say(..., lipsync=False) to hold the mouth still.
+  say(char, "வணக்கம்", frame, voice="ta")   TAMIL (or hi/te/... via gTTS) — Tamil
+     text in, Tamil speech out. voice= is a piper name OR a gTTS language code.
 
 SCENERY (backdrops, from scripts)
   scenery("sky") / scenery("ground") / scenery("house", x=520)

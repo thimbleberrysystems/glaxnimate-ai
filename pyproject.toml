@@ -25,7 +25,8 @@ dev = ["pytest>=8", "ruff>=0.6"]
 # Dialogue only. Kept out of the core install because it pulls onnxruntime
 # (~200 MB) and because a scene REPLAYS its dialogue from the cached WAVs
 # without it — piper is needed to author a line, not to render one again.
-tts = ["piper-tts>=1.4"]
+# gTTS is the light multilingual fallback for languages piper lacks (e.g. Tamil).
+tts = ["piper-tts>=1.4", "gtts>=2.5"]
 
 [build-system]
 requires = ["hatchling"]

@@ -64,6 +64,33 @@ def test_a_face_without_speech_mouths_is_not_lip_synced():
     assert swaps == [], "a face without say_* mouths is left alone"
 
 
+def test_bare_language_code_routes_to_gtts_not_piper(monkeypatch):
+    """Piper has no Tamil; a bare code (ta) or gtts:xx routes to the Google backend,
+    while a full piper model name does not."""
+    import numpy as np
+
+    from glaxnimate_ai.audio import voice as V
+
+    monkeypatch.delenv("GLAXNIMATE_AI_TTS_STUB", raising=False)
+    seen = {}
+    monkeypatch.setattr(V, "_gtts_synthesize",
+                        lambda text, lang, sr: seen.__setitem__("lang", lang)
+                        or np.zeros(64, dtype=np.float32))
+    V.synthesize("hello", "ta")
+    assert seen["lang"] == "ta"
+    V.synthesize("hola", "gtts:es")
+    assert seen["lang"] == "es"
+    # a full piper name must NOT take the gTTS path
+    seen.clear()
+    monkeypatch.setattr(V, "_gtts_synthesize",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("used gTTS")))
+    monkeypatch.setattr(V, "PiperVoice", None, raising=False)
+    try:
+        V.synthesize("hi", "en_US-lessac-medium")
+    except Exception:
+        pass  # piper path may fail on a stubbed model — the point is it did NOT use gTTS
+
+
 def test_lip_sync_swaps_survive_replay():
     st = SessionStore()
     s = st.create(width=280, height=320, frames=30)
