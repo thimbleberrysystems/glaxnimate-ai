@@ -31,7 +31,7 @@ from typing import Any
 from glaxnimate import environment
 
 from ..cartoon import (
-    actions, assets, geometry, motion, physics, presets, principles, rig)
+    actions, assets, diagram, geometry, motion, physics, presets, principles, rig)
 from ..cartoon.gait import Gait, pose_at
 from ..cartoon.presets import Body, lineart
 from . import scene_doc as SD
@@ -1171,6 +1171,129 @@ class Session:
             })
         return f"shape {lname!r} at ({x:g}, {y:g})"
 
+    # ------------------------------------------------------------ explainer hooks
+    def _highlight(self, x: float, y: float, *, w: float = 70.0, h: float = 70.0,
+                   shape: str = "ring", color: str = "#e0533d", width: float = 4.0,
+                   appear: float = 0.0, vanish: float = 0.0,
+                   pulse: bool = True, name: str | None = None) -> str:
+        """Draw attention to a spot: a ring or box that pops in (and optionally out)
+        and breathes. The single most-used explainer move — 'look *here*'. `shape` is
+        "ring" or "box"; pair `appear`/`vanish` with a narration beat."""
+        if shape == "box":
+            hw, hh = w / 2, h / 2
+            pts = [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh], [-hw, -hh]]
+            shapes = [{"type": "polyline", "points": pts, "color": color, "width": width}]
+        else:
+            n = 40
+            pts = [[round(w / 2 * math.cos(2 * math.pi * i / n), 2),
+                    round(h / 2 * math.sin(2 * math.pi * i / n), 2)] for i in range(n + 1)]
+            shapes = [{"type": "polyline", "points": pts, "color": color, "width": width}]
+        lname = name or f"highlight.{len(self.doc.setdefault('shapes', []))}"
+        return self._add_shape(shapes, x, y, name=lname, appear=appear, vanish=vanish,
+                               pulse=(0.9, 1.08, 3) if pulse else None)
+
+    def _write_on(self, shapes, x: float, y: float, *, start: float = 0.0,
+                  end: float | None = None, name: str | None = None,
+                  record: bool = True) -> str:
+        """Reveal a diagram as if hand-drawn: stroked paths (`polyline`) are *drawn*
+        with a travelling pen (a keyed Trim), fills and text fade in — each shape in
+        turn across [start, end]. The whiteboard build-up, from any shape list a
+        diagram function returns."""
+        from glaxnimate import model, utils
+
+        from . import props as P
+
+        items = shapes["shapes"] if isinstance(shapes, dict) else list(shapes)
+        n = max(len(items), 1)
+        end = end if end is not None else start + max(n * 8, 12)
+        span = (end - start) / n
+        base = name or f"writeon.{len(self.doc.setdefault('writeons', []))}"
+
+        for i, sh in enumerate(items):
+            s0 = start + i * span
+            s1 = s0 + span
+            lay = self.scene.layer(f"{base}.{i}")
+            if sh.get("type") == "polyline":
+                g = lay.add_shape("Group")
+                st = g.add_shape("Stroke")
+                st.color.value = sh.get("color", "#1f2430")
+                st.width.value = float(sh.get("width", 3.0))
+                st.cap = st.Cap.RoundCap
+                st.join = st.Join.RoundJoin
+                tr = g.add_shape("Trim")
+                p = g.add_shape("Path")
+                bez = p.shape.value
+                z = utils.Point(0, 0)
+                px0, py0 = sh["points"][0]
+                bez.add_point(utils.Point(x + px0, y + py0), z, z)
+                for px, py in sh["points"][1:]:
+                    bez.line_to(utils.Point(x + px, y + py))
+                if sh.get("close"):
+                    bez.close()
+                p.shape.value = bez
+                tr.end.set_keyframe(0.0, 0.0)
+                tr.end.set_keyframe(float(s0), 0.0)
+                tr.end.set_keyframe(float(s1), 1.0)
+            else:
+                P.draw_prop(lay, {"shapes": [sh]}, x=x, ground_y=y)
+                lay.opacity.set_keyframe(0.0, 0.0)
+                hold = model.KeyframeTransition(); hold.hold = True
+                lay.opacity.set_transition(0.0, hold)
+                lay.opacity.set_keyframe(float(s0), 0.0)
+                lay.opacity.set_keyframe(float(s1), 1.0)
+        if record:
+            self.doc.setdefault("writeons", []).append(
+                {"shapes": items, "x": x, "y": y, "start": start, "end": end, "name": base})
+        return f"write_on {base!r}: {n} shapes over f{start:g}-{end:g}"
+
+    def _counter(self, x: float, y: float, *, v0: float = 0.0, v1: float = 100.0,
+                 start: float = 0.0, end: float = 48.0, size: float = 28.0,
+                 color: str = "#1f2430", prefix: str = "", suffix: str = "",
+                 decimals: int = 0, anchor: str = "middle", ease: bool = True,
+                 step: int = 1, name: str | None = None, record: bool = True) -> str:
+        """A number that ticks from `v0` to `v1` across [start, end] — a tally, a
+        percentage, a running total, a physics readout. Text is not animatable, so
+        this lays one label per step and shows each in its window, holding `v1` after."""
+        from . import props as P
+
+        base = name or f"counter.{len(self.doc.setdefault('counters', []))}"
+        end = float(end); start = float(start)
+        frames = [f for f in range(int(start), int(end) + 1, max(step, 1))]
+        if not frames or frames[-1] != int(end):
+            frames.append(int(end))
+
+        def val_at(f):
+            t = 0.0 if end == start else (f - start) / (end - start)
+            t = principles.ease_out(t) if ease else t
+            return v0 + (v1 - v0) * max(0.0, min(1.0, t))
+
+        from glaxnimate import model
+
+        def key(lay, f, v):                         # a stepped (held) opacity key
+            lay.opacity.set_keyframe(float(f), float(v))
+            tr = model.KeyframeTransition(); tr.hold = True
+            lay.opacity.set_transition(float(f), tr)
+
+        for i, f in enumerate(frames):
+            txt = f"{prefix}{val_at(f):.{decimals}f}{suffix}"
+            lay = self.scene.layer(f"{base}.{i}")
+            P.draw_prop(lay, {"shapes": [{"type": "text", "x": 0, "y": 0, "text": txt,
+                                          "size": size, "color": color, "anchor": anchor}]},
+                        x=x, ground_y=y)
+            # exactly one label visible at a time: on at its frame, off when the next
+            # arrives (the last one holds `v1` to the end). Held keys => no cross-fade.
+            key(lay, 0.0, 0.0)
+            key(lay, float(f), 1.0)
+            if i + 1 < len(frames):
+                key(lay, float(frames[i + 1]), 0.0)
+        if record:
+            self.doc.setdefault("counters", []).append({
+                "x": x, "y": y, "v0": v0, "v1": v1, "start": start, "end": end,
+                "size": size, "color": color, "prefix": prefix, "suffix": suffix,
+                "decimals": decimals, "anchor": anchor, "ease": ease, "step": step,
+                "name": base})
+        return f"counter {base!r}: {v0:g}->{v1:g} over f{start:g}-{end:g}"
+
     # ------------------------------------------------------------------ camera
     def _world(self):
         """The camera container: content re-parents under one layer so its transform
@@ -1623,6 +1746,16 @@ class Session:
             "geometry": geometry,
             "rig": rig,
             "Vec2": geometry.Vec2,
+            # the explainer toolkit: diagrams as data
+            "diagram": diagram,
+            "arrow": diagram.arrow,
+            "axes": diagram.axes,
+            "plot": diagram.plot,
+            "number_line": diagram.number_line,
+            "grid": diagram.grid,
+            "bar_chart": diagram.bar_chart,
+            "brace": diagram.brace,
+            "label": diagram.label,
             "human": presets.human,
             "biped": presets.biped,
             "quadruped": presets.quadruped,
@@ -1650,6 +1783,9 @@ class Session:
             "add_sound": self._add_sound,
             "add_effect": self._add_effect,
             "add_shape": self._add_shape,
+            "highlight": self._highlight,
+            "write_on": self._write_on,
+            "counter": self._counter,
             "emit": self._emit,
             "rope": self._rope,
             "leash": self._leash,
@@ -1769,6 +1905,15 @@ class Session:
                 sp["shapes"], sp["x"], sp["y"], name=sp["name"], scale=sp["scale"],
                 pulse=tuple(sp["pulse"]) if sp["pulse"] else None, spin=sp["spin"],
                 appear=sp["appear"], vanish=sp.get("vanish", 0.0), record=False)
+        for wo in doc.get("writeons", []):
+            session._write_on(wo["shapes"], wo["x"], wo["y"], start=wo["start"],
+                              end=wo["end"], name=wo["name"], record=False)
+        for co in doc.get("counters", []):
+            session._counter(
+                co["x"], co["y"], v0=co["v0"], v1=co["v1"], start=co["start"],
+                end=co["end"], size=co["size"], color=co["color"], prefix=co["prefix"],
+                suffix=co["suffix"], decimals=co["decimals"], anchor=co["anchor"],
+                ease=co["ease"], step=co["step"], name=co["name"], record=False)
         for em in doc.get("emits", []):
             session._emit(
                 em["fx"], em["x"], em["y"], count=em["count"], spread=em["spread"],

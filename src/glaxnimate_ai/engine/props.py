@@ -72,6 +72,31 @@ def _poly(parent, pts: list[tuple[float, float]], color: str):
     return g
 
 
+def _polyline(parent, pts: list[tuple[float, float]], color: str, width: float,
+              close: bool = False):
+    """A stroked open path — a pen line through the points. This is the line that
+    every diagram is made of: an axis, a plotted curve, an arrow shaft, a brace, a
+    connector. Round cap/join so corners and ends read clean, and because it is a
+    real Path it can be revealed progressively with a Trim (see write_on)."""
+    g = parent.add_shape("Group")
+    st = g.add_shape("Stroke")
+    st.color.value = color
+    st.width.value = width
+    st.cap = st.Cap.RoundCap
+    st.join = st.Join.RoundJoin
+    p = g.add_shape("Path")
+    bez = p.shape.value
+    zero = utils.Point(0, 0)
+    x0, y0 = pts[0]
+    bez.add_point(utils.Point(x0, y0), zero, zero)
+    for x, y in pts[1:]:
+        bez.line_to(utils.Point(x, y))
+    if close:
+        bez.close()
+    p.shape.value = bez
+    return g
+
+
 def _text(parent, x: float, y: float, text: str, size: float, color: str,
           family: str | None = None, anchor: str = "start"):
     """A line of real vector text — the binding downcasts TextShape now, so its
@@ -181,6 +206,10 @@ def draw_prop(layer, data: dict, *, x: float = 0.0, ground_y: float = 0.0,
             _text(layer, x + sh["x"] * sx, ground_y + sh["y"] * sy, sh["text"],
                   sh.get("size", 24) * min(sx, sy), color,
                   family=sh.get("family"), anchor=sh.get("anchor", "start"))
+        elif t == "polyline":
+            pts = [(x + px * sx, ground_y + py * sy) for px, py in sh["points"]]
+            _polyline(layer, pts, color, sh.get("width", 2.0) * min(sx, sy),
+                      sh.get("close", False))
 
 
 def parallax(layer, *, distance: float, frames: int, camera_speed: float) -> None:
