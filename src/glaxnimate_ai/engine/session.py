@@ -31,9 +31,10 @@ from typing import Any
 from glaxnimate import environment
 
 from ..cartoon import (
-    actions, assets, diagram, geometry, motion, physics, presets, principles, rig)
+    actions, assets, diagram, geometry, motion, physics, presets, principles,
+    rig, scene_style)
 from ..cartoon.gait import Gait, pose_at
-from ..cartoon.presets import Body, apply_style, lineart
+from ..cartoon.presets import Body, apply_style
 from . import scene_doc as SD
 from .bake import Scene, bake_rig, bake_samples
 
@@ -1447,6 +1448,23 @@ class Session:
             self.doc["background"] = {"color": color}
         return f"background {color}"
 
+    def _backdrop_style(self, name: str, *, record: bool = True) -> str:
+        """Set a whole themed world behind the action — a gradient sky, a night
+        starfield, a blueprint grid, a chalkboard — instead of a flat card. Call it
+        FIRST (it sits at the very back). Returns the ink/accent that read well in
+        the theme, so a figure can be coloured to match (see theme_palette)."""
+        from . import props as P
+
+        comp = self.scene.comp
+        lay = self.scene.layer("backdrop_style")
+        shapes = scene_style.theme_backdrop(name, float(comp.width),
+                                            float(comp.height), self.ground_y)
+        P.draw_prop(lay.add_shape("Group"), {"shapes": shapes}, x=0.0, ground_y=0.0)
+        if record:
+            self.doc["backdrop_style"] = {"name": name}
+        pal = scene_style.theme_palette(name)
+        return f"backdrop_style {name!r} (ink {pal['ink']}, accent {pal['accent']})"
+
     def _path_fn(self, points, span: float):
         """A polyline sampler: point at fraction f/span along `points` (a (x,y) list)."""
         from ..cartoon.geometry import Vec2
@@ -1788,6 +1806,13 @@ class Session:
             "scenery": self._scenery,
             "backdrop": self._backdrop,
             "background": self._background,
+            "backdrop_style": self._backdrop_style,
+            # scene-style building blocks (gradients, patterns, scenery, themes)
+            "scene_style": scene_style,
+            "theme_palette": scene_style.theme_palette,
+            "theme_names": scene_style.theme_names,
+            "gradient_bg": scene_style.gradient_bg,
+            "radial_bg": scene_style.radial_bg,
             "cursor": self._cursor,
             "drag": self._drag,
             "add_sound": self._add_sound,
@@ -1860,6 +1885,9 @@ class Session:
         bg = doc.get("background")           # very first, so it sits behind all
         if bg:
             session._background(bg["color"], record=False)
+        bs = doc.get("backdrop_style")
+        if bs:
+            session._backdrop_style(bs["name"], record=False)
         bd = doc.get("backdrop")            # then the image backdrop
         if bd and Path(bd["path"]).exists():
             session._backdrop(bd["path"], fit=bd["fit"], opacity=bd["opacity"],

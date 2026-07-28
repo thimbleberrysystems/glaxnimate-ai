@@ -57,6 +57,7 @@ def empty_doc(*, width: int, height: int, frames: int, fps: float,
         "scenery": [], "props": [], "characters": [], "objects": [], "shots": [],
         "effects": [], "shapes": [], "emits": [], "ropes": [], "leashes": [],
         "overlays": [], "backdrop": None, "background": None,
+        "backdrop_style": None,
         "writeons": [], "counters": [],
         "audio": {"cues": [], "music": None, "dialogue": []},
     }
@@ -85,6 +86,7 @@ def load_doc(doc_id: str) -> dict:
     doc.setdefault("overlays", [])
     doc.setdefault("backdrop", None)
     doc.setdefault("background", None)
+    doc.setdefault("backdrop_style", None)
     doc.setdefault("writeons", [])
     doc.setdefault("counters", [])
     if doc.get("version") != VERSION:
