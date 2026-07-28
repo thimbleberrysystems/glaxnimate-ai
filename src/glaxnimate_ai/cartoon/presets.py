@@ -26,7 +26,8 @@ from .geometry import Vec2
 from .rig import Joint, Pose, Rig
 
 __all__ = ["Body", "Part", "biped", "human", "quadruped", "stick", "lineart",
-           "make_gait", "pace"]
+           "make_gait", "pace", "silhouette", "comic", "neon", "sketch", "blocky",
+           "rubber_hose", "flat", "STYLES", "apply_style", "style_names"]
 
 
 @dataclass(slots=True)
@@ -45,15 +46,29 @@ class Part:
     head: tuple[float, float] | None = None
     #: A dot at the bone's tip: a hand, a paw, a nose.
     tip: float = 0.0
+    #: Colour of the tip dot (a glove, a coloured paw). Defaults to the bone colour.
+    tip_color: str | None = None
     #: Painting order. Low numbers go behind, so a far arm sits under the torso.
     z: int = 0
     #: Draw the bone as an open-path *stroke* (a pen line) instead of a filled
     #: capsule. This is the stick-figure look: `width` becomes the stroke weight.
+    #: Kept for back-compat; `render` is the general control.
     stroke: bool = False
     #: How a `head` renders under `stroke`: an outline "ring", a solid "dot", or a
     #: "fill" (a filled ellipse, the classic capsule-mode head). Ignored when the
     #: part has no `head`.
     head_style: str = "ring"
+    #: The render treatment — the *style* of the skin, applied per bone so it works
+    #: on any rig (a dog, a bird), not just a humanoid:
+    #:   "capsule" filled rod (default) · "stroke" pen line (line-art/stick) ·
+    #:   "outline" filled + dark keyline (comic) · "glow" neon double-stroke ·
+    #:   "rough" wobbly hand-drawn stroke · "blocky" sharp rectangles (robot).
+    #: "capsule" defers to `stroke` for back-compat.
+    render: str = "capsule"
+    #: Keyline colour for the "outline" render (and the ink of a glow/rough).
+    outline: str | None = None
+    #: Keyline / secondary-stroke weight.
+    outline_width: float = 3.5
 
 
 @dataclass(slots=True)
@@ -185,6 +200,108 @@ def stick(*, ink: str = "#1a1a1a", weight: float = 7.0, head_d: float = 42.0,
     """The canonical stick figure: `biped()` drawn as line-art. A first-class preset
     for the flagship look; `lineart()` applies the same treatment to any body."""
     return lineart(biped(**kw), ink=ink, weight=weight, head_d=head_d)
+
+
+# ---------------------------------------------------------------------- styles
+# A *style* is a render-skin applied per bone, so — like `lineart` — it reskins ANY
+# rig, not just a humanoid: a dog, a bird and an 8-legged rig all take the same
+# treatment. Each returns a new Body; the look serialises in `parts`, so it replays
+# from the scene document (content is data). Painterly / sand / claymation / pixel
+# looks need a raster or shader pipeline this vector engine does not have, and are
+# deliberately out of scope; everything expressible as strokes and fills is here.
+
+def _reskin(body: Body, fn) -> Body:
+    parts = {name: fn(name, body.parts.get(name, Part())) for name in body.bones}
+    return replace(body, parts=parts)
+
+
+def silhouette(body: Body, *, ink: str = "#16161c") -> Body:
+    """Shadow-puppet: every bone a solid dark fill, no features — pure shape and
+    contrast (Lotte Reiniger, the couch-gag intro)."""
+    return _reskin(body, lambda n, p: Part(
+        width=p.width, color=ink, head=p.head, tip=p.tip, tip_color=ink, z=p.z,
+        head_style="fill", render="capsule"))
+
+
+def comic(body: Body, *, outline: str = "#141414", outline_width: float = 4.5) -> Body:
+    """Classic cartoon / comic: the body's own colours under a bold black keyline."""
+    return _reskin(body, lambda n, p: Part(
+        width=p.width, color=p.color, head=p.head, tip=p.tip, tip_color=p.tip_color,
+        z=p.z, render="outline", outline=outline, outline_width=outline_width,
+        head_style=p.head_style))
+
+
+def flat(body: Body, *, palette: str | None = None) -> Body:
+    """Flat design / vector: clean filled shapes, no outline, no joint discs read as
+    shading — the modern explainer look. Keeps the body's colours (or floods one)."""
+    return _reskin(body, lambda n, p: Part(
+        width=p.width, color=palette or p.color, head=p.head, tip=p.tip,
+        tip_color=None if palette is None else palette, z=p.z, render="capsule"))
+
+
+def neon(body: Body, *, ink: str = "#39ff14", weight: float = 6.0,
+         head_d: float = 42.0) -> Body:
+    """Neon / glow: a bright stroke over a soft halo — put it on a dark background."""
+    def f(n, p):
+        if p.head:
+            return Part(width=weight, color=ink, head=(head_d, head_d), z=p.z,
+                        render="glow", head_style="ring")
+        return Part(width=weight, color=ink, tip=p.tip, z=p.z, render="glow")
+    return _reskin(body, f)
+
+
+def sketch(body: Body, *, ink: str = "#20242c", weight: float = 5.0,
+           head_d: float = 42.0) -> Body:
+    """Sketchy / hand-drawn: wobbly pen strokes, as if drawn by hand."""
+    def f(n, p):
+        if p.head:
+            return Part(width=weight, color=ink, head=(head_d, head_d), z=p.z,
+                        render="rough", head_style="ring")
+        return Part(width=weight, color=ink, tip=p.tip, z=p.z, render="rough")
+    return _reskin(body, f)
+
+
+def blocky(body: Body, *, outline: str | None = None) -> Body:
+    """Blocky / robot: sharp rectangles instead of capsules — a constructed, rigid,
+    8-bit-ish read. Keeps the body's colours."""
+    return _reskin(body, lambda n, p: Part(
+        width=p.width, color=p.color, head=p.head, tip=p.tip, tip_color=p.tip_color,
+        z=p.z, render="blocky", outline=outline, outline_width=3.0))
+
+
+def rubber_hose(body: Body, *, ink: str = "#1b1b1b", weight: float = 13.0,
+                glove: str = "#f4f1e8", head_d: float = 46.0) -> Body:
+    """Rubber-hose (1930s Fleischer / Cuphead): thick noodle limbs with no visible
+    joints — the round-capped stroke covers the bend — and big pale gloves/shoes."""
+    def f(n, p):
+        if p.head:
+            return Part(width=weight, color=ink, head=(head_d, head_d), z=p.z,
+                        render="stroke", head_style="fill")
+        tip = max(p.tip * 1.9, weight * 0.95) if p.tip else 0.0
+        return Part(width=weight, color=ink, tip=tip, tip_color=glove if tip else None,
+                    z=p.z, render="stroke")
+    return _reskin(body, f)
+
+
+#: The registry — name -> reskin function. `stick`/`lineart` are the line-art entry.
+STYLES = {
+    "capsule": lambda b, **kw: b,
+    "lineart": lineart, "stick": lineart,
+    "silhouette": silhouette, "comic": comic, "flat": flat, "neon": neon,
+    "sketch": sketch, "blocky": blocky, "rubber_hose": rubber_hose,
+}
+
+
+def style_names() -> list[str]:
+    return sorted(STYLES)
+
+
+def apply_style(body: Body, name: str, **kw) -> Body:
+    """Reskin `body` in a named style (see `STYLES`). The one call `style=` routes
+    through, so any figure — character or creature — can wear any look."""
+    if name not in STYLES:
+        raise ValueError(f"unknown style {name!r}; have {style_names()}")
+    return STYLES[name](body, **kw)
 
 
 def quadruped(

@@ -24,6 +24,7 @@ Glaxnimate.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 
@@ -200,39 +201,74 @@ def _stroke_styler(g, color: str, width: float):
     return st
 
 
+def _mix(hex1: str, hex2: str, t: float) -> str:
+    """Blend two #rrggbb colours — used to derive a glow tint from an ink."""
+    def rgb(h):
+        h = h.lstrip("#")
+        return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+    a, b = rgb(hex1), rgb(hex2)
+    return "#" + "".join(f"{int(a[i] + (b[i] - a[i]) * t):02x}" for i in range(3))
+
+
+def _rough_points(length: float, amp: float, segs: int = 5) -> list[tuple[float, float]]:
+    """A wobbly line origin->tip: deterministic perpendicular jitter, so a 'sketched'
+    bone looks hand-drawn but replays identically (no RNG)."""
+    pts = []
+    for i in range(segs + 1):
+        t = i / segs
+        # a fixed multi-frequency wiggle, zero at both ends so bones still meet
+        w = math.sin(t * math.pi) * (math.sin(t * 11.0) * 0.6 + math.sin(t * 23.0) * 0.4)
+        pts.append((t * length, w * amp))
+    return pts
+
+
 def _draw_part(layer, length: float, part: Part, *, marker: float = 0.0) -> None:
     """Draw one bone's skin into its layer, in local space (origin = the joint).
 
-    Two looks. **Filled** (default): a capsule plus a disc at the joint — the disc
-    stops two capsules meeting at an angle from leaving a notch on every bend. A
-    `head` part is a filled ellipse at the tip; a `tip` is a hand/paw dot.
-    **Stroke** (`part.stroke`, the stick-figure look): an open pen line from origin
-    to tip, `width` its weight; a `head` becomes a ring (outline), a dot (solid) or
-    a fill, per `head_style`. Either way it is static — the transform does the moving.
+    The *style* is `part.render`, applied per bone so any rig reskins the same way:
+    "capsule" (filled rod + joint disc), "stroke" (a pen line — line-art), "outline"
+    (filled with a dark keyline — comic), "glow" (a neon double-stroke), "rough" (a
+    wobbly hand-drawn stroke) and "blocky" (sharp rectangles — a robot). Static, as
+    always — the bone's transform does the moving.
     """
+    mode = part.render
+    if mode == "capsule" and part.stroke:      # back-compat: stroke flag -> line-art
+        mode = "stroke"
     g = layer.add_shape("Group")
+    L = max(length, 1.0)
 
-    if part.stroke:
+    if mode in ("stroke", "glow", "rough"):
+        ink = part.color
+        pts = (_rough_points(L, part.width * 0.5) if mode == "rough"
+               else [(0.0, 0.0), (L, 0.0)])
         if part.head:
             hw, hh = part.head
-            if part.head_style == "ring":
-                _stroke_styler(g, part.color, part.width)
-            else:  # "dot" / "fill": a solid head
-                g.add_shape("Fill").color.value = part.color
-            e = g.add_shape("Ellipse")
+            if mode == "glow":                 # a soft halo ring under a bright ring
+                _stroke_styler(g, _mix(ink, "#ffffff", 0.55), part.width * 2.4)
+                eg = g.add_shape("Ellipse")
+                eg.size.value = utils.Size(hw + 8, hh + 8)
+                eg.position.value = utils.Point(length, 0.0)
+                g2 = layer.add_shape("Group")
+                _stroke_styler(g2, ink, part.width)
+                e = g2.add_shape("Ellipse")
+            elif part.head_style == "ring":
+                _stroke_styler(g, ink, part.width)
+                e = g.add_shape("Ellipse")
+            else:
+                g.add_shape("Fill").color.value = ink
+                e = g.add_shape("Ellipse")
             e.size.value = utils.Size(hw, hh)
             e.position.value = utils.Point(length, 0.0)
         else:
-            _stroke_styler(g, part.color, part.width)
-            p = g.add_shape("Path")
-            bez = p.shape.value
-            zero = utils.Point(0.0, 0.0)
-            bez.add_point(utils.Point(0.0, 0.0), zero, zero)
-            bez.line_to(utils.Point(max(length, 1.0), 0.0))  # open path: no close()
-            p.shape.value = bez
-            if part.tip > 0:  # a hand/paw dot wider than the line
+            if mode == "glow":                 # fat pale stroke, then the bright core
+                _stroke_styler(g, _mix(ink, "#ffffff", 0.55), part.width * 2.4)
+                _path(g, pts)
+                g = layer.add_shape("Group")
+            _stroke_styler(g, ink, part.width)
+            _path(g, pts)
+            if part.tip > 0:
                 dot = layer.add_shape("Group")
-                dot.add_shape("Fill").color.value = part.color
+                dot.add_shape("Fill").color.value = part.tip_color or ink
                 t = dot.add_shape("Ellipse")
                 t.size.value = utils.Size(part.tip * 2, part.tip * 2)
                 t.position.value = utils.Point(length, 0.0)
@@ -240,32 +276,57 @@ def _draw_part(layer, length: float, part: Part, *, marker: float = 0.0) -> None
             _draw_marker(layer, length, marker)
         return
 
+    # ---- filled modes: "capsule", "outline", "blocky"
+    blocky = mode == "blocky"
     g.add_shape("Fill").color.value = part.color
+    if part.outline or mode == "outline":
+        _stroke_styler(g, part.outline or "#1a1a1a", part.outline_width)
 
     if part.head:
         hw, hh = part.head
-        e = g.add_shape("Ellipse")
-        e.size.value = utils.Size(hw, hh)
-        e.position.value = utils.Point(length, 0.0)
+        if blocky:
+            r = g.add_shape("Rect")
+            r.size.value = utils.Size(hw, hh)
+            r.position.value = utils.Point(length, 0.0)
+        else:
+            e = g.add_shape("Ellipse")
+            e.size.value = utils.Size(hw, hh)
+            e.position.value = utils.Point(length, 0.0)
         return
 
     w = part.width
     r = g.add_shape("Rect")
-    r.size.value = utils.Size(max(length, 1.0), w)
+    r.size.value = utils.Size(L, w)
     r.position.value = utils.Point(length / 2.0, 0.0)
-    r.rounded.value = w / 2.0
+    r.rounded.value = 0.0 if blocky else w / 2.0
 
-    cap = g.add_shape("Ellipse")
-    cap.size.value = utils.Size(w, w)
-    cap.position.value = utils.Point(0.0, 0.0)
+    if not blocky:                             # round joint cap; sharp bones skip it
+        cap = g.add_shape("Ellipse")
+        cap.size.value = utils.Size(w, w)
+        cap.position.value = utils.Point(0.0, 0.0)
 
     if part.tip > 0:
-        t = g.add_shape("Ellipse")
+        tg = layer.add_shape("Group")
+        tg.add_shape("Fill").color.value = part.tip_color or part.color
+        if part.outline or mode == "outline":
+            _stroke_styler(tg, part.outline or "#1a1a1a", part.outline_width)
+        t = tg.add_shape("Rect" if blocky else "Ellipse")
         t.size.value = utils.Size(part.tip * 2, part.tip * 2)
         t.position.value = utils.Point(length, 0.0)
 
     if marker > 0:
         _draw_marker(layer, length, marker)
+
+
+def _path(g, pts: list[tuple[float, float]]) -> None:
+    """An open polyline path inside a styled group."""
+    p = g.add_shape("Path")
+    bez = p.shape.value
+    zero = utils.Point(0.0, 0.0)
+    bez.add_point(utils.Point(pts[0][0], pts[0][1]), zero, zero)
+    for x, y in pts[1:]:
+        bez.line_to(utils.Point(x, y))
+    p.shape.value = bez
 
 
 def _draw_marker(layer, length: float, marker: float) -> None:

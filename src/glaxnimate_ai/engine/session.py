@@ -33,7 +33,7 @@ from glaxnimate import environment
 from ..cartoon import (
     actions, assets, diagram, geometry, motion, physics, presets, principles, rig)
 from ..cartoon.gait import Gait, pose_at
-from ..cartoon.presets import Body, lineart
+from ..cartoon.presets import Body, apply_style, lineart
 from . import scene_doc as SD
 from .bake import Scene, bake_rig, bake_samples
 
@@ -148,8 +148,8 @@ class Session:
         turn) — so two figures can face each other. Pair it with a leftward gait to
         walk left; on its own it just turns a standing/talking figure around.
         """
-        if style == "lineart":
-            body = lineart(body)
+        if style:
+            body = apply_style(body, style)
 
         def pose_fn(t: float):
             # No hip_height here on purpose: pose_at reads the gait's own
@@ -316,8 +316,8 @@ class Session:
         stick figure, `face=` mounts a face, `facing=-1` turns it to look left,
         `scale=1.6` makes a giant (or 0.6 a sprite), exactly as `add_character` does.
         """
-        if style == "lineart":
-            body = lineart(body)
+        if style:
+            body = apply_style(body, style)
         return self._bake_character(body, pose_fn, gait=None, name=name,
                                     color=color, thickness=thickness, face=face,
                                     first=first, facing=facing, scale=scale)
@@ -1761,6 +1761,16 @@ class Session:
             "quadruped": presets.quadruped,
             "stick": presets.stick,
             "lineart": presets.lineart,
+            # render-skins — reskin any body in a named style
+            "silhouette": presets.silhouette,
+            "comic": presets.comic,
+            "flat": presets.flat,
+            "neon": presets.neon,
+            "sketch": presets.sketch,
+            "blocky": presets.blocky,
+            "rubber_hose": presets.rubber_hose,
+            "apply_style": presets.apply_style,
+            "style_names": presets.style_names,
             "make_gait": presets.make_gait,
             "pace": presets.pace,
             "pose_at": pose_at,  # build a base pose_fn to wrap with actions.trail

@@ -93,7 +93,10 @@ def body_to_data(body: Body) -> dict:
     parts = {
         name: {"width": p.width, "color": p.color,
                "head": list(p.head) if p.head else None, "tip": p.tip,
-               "z": p.z, "stroke": p.stroke, "head_style": p.head_style}
+               "tip_color": p.tip_color,
+               "z": p.z, "stroke": p.stroke, "head_style": p.head_style,
+               "render": p.render, "outline": p.outline,
+               "outline_width": p.outline_width}
         for name, p in body.parts.items()
     }
     return {
@@ -169,6 +172,9 @@ def body_from_data(data: dict) -> Body:
         if name not in rig.joints:
             raise ValueError(f"parts references unknown joint {name!r}")
         parts[name] = Part(
+            render=p.get("render", "capsule"), outline=p.get("outline"),
+            outline_width=float(p.get("outline_width", 3.5)),
+            tip_color=p.get("tip_color"),
             width=float(p.get("width", 14.0)), color=p.get("color", "#33333c"),
             head=tuple(p["head"]) if p.get("head") else None,
             tip=float(p.get("tip", 0.0)), z=int(p.get("z", 0)),
